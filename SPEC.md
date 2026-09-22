@@ -1,6 +1,6 @@
 # SPEC – Browser-Flugsimulator „C172 Web“
 
-Version 1.0 · Stand 2026-09-22
+Version 1.1 · Stand 2026-09-22 (ergänzt: Render-Interpolation, Kopfbewegung, Robustheit, Barrierefreiheit, Release/Rollback)
 
 ## 1. Ziel und Vision
 
@@ -10,6 +10,8 @@ Ein Flugsimulator im Browser, der sich anfühlt wie das Sitzen im Cockpit einer 
 - **Cockpit:** Der Blick geht vom linken Sitz aus. Im Cockpit liegen ein Instrumentenbrett mit Six-Pack und Drehzahlmesser, ein beweglicher Steuerhorn-Yoke, der Gashebel, der Klappenhebel und das Trimmrad. Nach vorn sieht man die Motorhaube mit dem drehenden Propeller, durch die Seitenfenster den Hochdecker-Flügel samt Strebe.
 - **Welt:** Endloses prozedurales Terrain mit Hügeln, Bergen, Seen, Wäldern und Feldern. Dazu kommt ein Flugplatz mit asphaltierter Piste. Himmel, Sonnenstand, Dunst und Wolken passen zur eingestellten Tageszeit.
 - **Klang:** Motor, Propeller, Fahrtwind, Überziehwarnung und Reifen werden live per WebAudio synthetisiert. Es gibt keine Audiodateien.
+
+**Priorität bei Zielkonflikten:** Fluggefühl → Cockpit & Bedienung → stabile Bildrate → Welt → weitere Features. Mehr Szenerie kaschiert kein schlechtes Fluggefühl; Messwerte allein belegen kein Cockpitgefühl (deshalb zusätzlich Bild- und Testflug-Abnahme, §8).
 
 Grundsatz: **So viel natives JS wie möglich, so wenige Pakete wie nötig.** Die einzige Laufzeitabhängigkeit ist **Three.js**. Es liegt vendored im Repo, die Seite braucht keinen Build und kein CDN.
 
@@ -31,7 +33,10 @@ Grundsatz: **So viel natives JS wie möglich, so wenige Pakete wie nötig.** Die
 
 ### 3.1 Koordinaten & Zeit
 - Die Welt ist in Metern angelegt: +X = Ost, +Y = oben, −Z = Nord (Three.js-Konvention). Kurs 0° entspricht Nord.
-- Die Physik läuft mit **festem Zeitschritt von 1/120 s** in einer Akkumulator-Schleife. Pro Frame sind höchstens 12 Substeps erlaubt, der Rest wird verworfen (Anti-Spiral-of-Death).
+- Die Physik läuft mit **festem Zeitschritt von 1/120 s** in einer Akkumulator-Schleife. Pro Frame sind höchstens 8 Substeps erlaubt; ein Überschuss wird verworfen und in `perf().droppedSteps` gezählt (Anti-Spiral-of-Death).
+- **Render-Interpolation:** Gerendert wird nie der rohe letzte Physikzustand, sondern eine Interpolation zwischen den letzten beiden Zuständen mit α = Akkumulator/dt (Position linear, Orientierung per Slerp). Das verhindert Mikroruckeln bei 60/90/120/144-Hz-Displays, die nicht synchron zu 120 Hz laufen.
+- **Determinismus:** Gleiche Eingabefolge pro Physikschritt ergibt unabhängig von der Bildrate bit-identische Zustände (Zufall nur über geseedeten RNG, der im Physikschritt fortgeschaltet wird).
+- **Fokusverlust / verdeckter Tab:** automatische Pause, alle gehaltenen Tasten und Touch-Eingaben werden gelöscht (keine hängenden Ruder), beim Fortsetzen wird die Uhr zurückgesetzt (kein Zeitsprung).
 - **Kein Floating Origin.** Die Physik rechnet in float64 (JS-Number). Three.js berechnet `modelViewMatrix` auf der CPU in float64, sodass bis ±200 km kein sichtbarer Jitter entsteht. Terrain-Vertices werden kachel-lokal gespeichert, Shader-Muster nutzen kachel-lokale bzw. modulo-reduzierte Koordinaten. Das ist bewusst einfach gehalten; ein Floating Origin wäre erst jenseits von 200 km nötig und ist Out of Scope.
 
 ### 3.2 Flugzeug (Cessna 172P, Referenzdaten)
@@ -54,6 +59,8 @@ Grundsatz: **So viel natives JS wie möglich, so wenige Pakete wie nötig.** Die
 - Momente: Cm (Längsstabilität, Nickdämpfung, Höhenruder, Trimmung, Klappen-Nickmoment), Cl (Rollen: Schiebe-Roll-Moment, Rolldämpfung, Querruder), Cn (Kursstabilität, Gierdämpfung, Seitenruder, negatives Wendemoment).
 - Stall: Die Aerodynamik rechnet mit Staudruck bzw. TAS; die Stallwerte ergeben sich daher als **CAS**. CLmax wird so getunt, dass bei 1089 kg ein Stall clean bei ≈ 51 KCAS und mit Klappen 30 bei ≈ 46 KCAS eintritt. Beim Abkippen entsteht ein **kontinuierlicher, begrenzter asymmetrischer Auftriebsverlust** zwischen linkem und rechtem Flügel, abhängig von α, β und Seitenruder, ohne einmaligen Impuls. Ein fester Seed liefert nur eine kleine Grundasymmetrie, sodass das Verhalten reproduzierbar bleibt.
 - **Fahrtmesser-Kalibrierung:** Die Anzeige wandelt KCAS → KIAS über eine POH-nahe Tabelle je Klappenstellung (Tabelle im PLAN). `state` liefert `cas_kt` und `ias_kt`.
+- Ruderwirksamkeit ergibt sich ausschließlich aus dem (Slipstream-)Staudruck — bei geringer Anströmung werden die Ruder weich, im Propellerstrahl bleibt das Seitenruder am Boden wirksam. Die Steuerflächen folgen der Eingabe mit begrenzter Stellrate (≈ 90°/s), nicht sprunghaft.
+- **Keine künstlichen Hilfen in der Physik:** keine Landemagnetik, kein Auto-Level, kein heimliches Halten von Höhe/Fahrt. Hilfen (§4.3) wirken nur auf die Eingabe und sind sichtbar benannt.
 - Propellereffekte: Drehmoment-Rollmoment, P-Faktor (Giermoment ∝ α bei hoher Leistung), Slipstream-Staudruck auf Höhen- und Seitenleitwerk.
 
 **Motor/Propeller:** Die Drehzahl ergibt sich dynamisch aus dem Gleichgewicht zwischen Motordrehmoment (Gasstellung, Dichte) und Propellerdrehmoment (CP(J)). Bei starrem Propeller steigt die RPM daher mit der Fahrt. Das Trägheitsmoment von Motor und Propeller ist als Parameter vorhanden. Die Zündung hat die Stellungen OFF / BOTH / START: Der Anlasser dreht bei START auf etwa 150–250 RPM, oberhalb von ~300 RPM läuft der Motor dann selbst.
@@ -124,6 +131,7 @@ Animiert werden:
 **Panel-Layout (verbindlich):** Oben liegen von links ASI, AI und ALT, unten TC, HI und VSI; der Drehzahlmesser sitzt rechts unten neben dem Six-Pack, die Instrumente vor dem Piloten. Das Auge sitzt ca. 0,75 m hinter dem Panel und 0,12 m über der Glareshield-Oberkante. Bei Default-FOV 70° und 1920×1080 hat jedes Six-Pack-Instrument einen Durchmesser von mindestens 90 px, und über die Motorhaube ist der Horizont sichtbar (Glareshield-Kante bei ca. −8° unter der Blickachse).
 | Klappen-/Trimmanzeige | Mechanisch am Hebel bzw. Rad | – |
 
+- **Kopfbewegung (dezent, abschaltbar):** Der Kopf ist ein gedämpftes Feder-Masse-System, angeregt durch Lastvielfache/Querbeschleunigung im Pilotenpunkt, Turbulenz und Fahrwerksstöße. Begrenzung: max. 2 cm Versatz und 1° Drehung, Rückkehr zur Neutrallage, **kein** zufälliges Dauerwackeln, keine automatische Horizontaufrichtung, kein fahrtabhängiger Zoom. Stärke 0–100 % (Default 50 %); bei `prefers-reduced-motion` Default 0 %. Am Boden bei laufendem Motor eine sehr leichte, drehzahlabhängige Vibration (< 1 mm), bei 0 % ebenfalls aus.
 - Glas: Leichte Spiegelung auf den Instrumentengläsern und eine dezente Windschutzscheibe, beides ohne teure Reflexionen.
 
 ### 3.8 Sound (WebAudio, synthetisiert)
@@ -152,6 +160,7 @@ Der AudioContext startet erst nach der ersten Nutzerinteraktion. Die Lautstärke
 3. **Pause** (`P`/`Esc`): Die Simulation friert ein. Das Overlay bietet Fortsetzen, Neustart, Einstellungen und Hauptmenü.
 4. **Crash-Overlay:** Zeigt den Grund und bietet einen Neustart.
 5. **Hochkant-Hinweis** auf Handys: „Bitte Gerät drehen“.
+6. **Lade- und Fehlerzustände:** App-Zustände `loading → ready → running ⇄ paused → crashed`, sowie `error`. Beim Laden echter Fortschritt (Module, Terrain-Initialisierung) statt Endlos-Spinner. Fehlt WebGL2, erscheint eine verständliche Meldung statt schwarzem Canvas. Ladefehler zeigen „Erneut versuchen“. Bei `webglcontextlost` pausiert die Simulation und bietet nach `webglcontextrestored` einen kontrollierten Neustart an.
 
 ### 4.2 Szenarien
 
@@ -180,6 +189,8 @@ Der AudioContext startet erst nach der ersten Nutzerinteraktion. Die Lautstärke
 | Höhenruder invertieren | Toggle | an/aus | aus |
 | Lautstärke | Slider | 0–100 % | 70 |
 | Datenleiste anzeigen | Toggle | an/aus | aus |
+| Kopfbewegung | Slider | 0–100 % | 50 % (0 % bei reduced motion) |
+| Koordinationshilfe (Auto-Seitenruder) | Toggle | an/aus; nur > 30 m AGL, manuelles Seitenruder hat Vorrang | aus |
 
 Alle Werte außer der Masse wirken sofort, auch während des Flugs. Die Masse wird beim Neustart übernommen.
 
@@ -241,7 +252,14 @@ Tastatureingaben auf die Ruder werden **geglättet**: Solange die Taste gehalten
 - Auf Touch-Geräten erscheint das Touch-Layout automatisch (`pointer: coarse`), über das Menü lässt es sich umschalten.
 
 ### 4.7 Visuelles Design der UI
-Die Menüs sind „Luftfahrt-Instrumenten“-inspiriert: dunkles, mattes Anthrazit, weiße Beschriftung, Akzente in Instrumenten-Grün und Warn-Gelb. Als Schrift dient eine System-Monospace-Schrift für Werte und System-Sans für den Text, es werden keine Webfonts geladen. Übergänge sind weiche Fades von 200 ms. Die Menüs liegen halbtransparent und mit Blur (`backdrop-filter`) über der laufenden 3D-Szene.
+Die Menüs sind „Luftfahrt-Instrumenten“-inspiriert: dunkles, mattes Anthrazit, weiße Beschriftung, Akzente in Instrumenten-Grün und Warn-Gelb. Als Schrift dient eine System-Monospace-Schrift für Werte und System-Sans für den Text, es werden keine Webfonts geladen. Übergänge sind weiche Fades von 200 ms. Die Menüs liegen halbtransparent über der laufenden 3D-Szene (`backdrop-filter`-Blur nur auf kleinen Panels, auf Qualität „Niedrig“ aus).
+
+**Barrierefreiheit & Bedienlogik der Menüs:**
+- Menüs sind semantisches HTML (native `<dialog>`), vollständig per Tastatur bedienbar, sichtbarer Fokus, Fokus bleibt im offenen Dialog und kehrt danach zum Auslöser zurück.
+- Textkontrast ≥ 4,5:1; Farbcodierungen (Warnungen) immer zusätzlich mit Text/Symbol.
+- Solange ein Menü offen ist, lösen Tasten **keine** Flugsteuerung aus; Fortsetzen ist eine bewusste Aktion.
+- `prefers-reduced-motion`: UI-Übergänge und Kopfbewegung aus.
+- Warnhinweise (STALL, VNE, Überdrehzahl) verdecken nie Piste oder Horizont.
 
 ## 5. Nicht-funktionale Anforderungen
 
@@ -256,6 +274,9 @@ Die Menüs sind „Luftfahrt-Instrumenten“-inspiriert: dunkles, mattes Anthraz
 | N7 | Konsole | Keine Errors oder Warnings im normalen Betrieb |
 | N8 | Draw Calls (Mittel) | ≤ 250 |
 | N9 | Speicher | Kein kontinuierlicher Anstieg: JS-Heap nach 10 min Flug ≤ +20 % gegenüber Minute 1 |
+| N11 | Frame-Pacing | p95 der Bildintervalle ≤ 20 ms im 5-min-Referenzflug nach Aufwärmphase |
+| N12 | Dauerbetrieb | 20 min gemischter Flug inkl. Pausen, Ansichtswechseln und Neustarts ohne Fehler und ohne fortlaufendes Speicherwachstum |
+| N13 | Keine Drittanbieter | Nach dem Laden null Requests an fremde Hosts (kein CDN, keine Fonts, keine Telemetrie) |
 | N10 | Robustheit | Tab verstecken und wieder zeigen führt nicht zu einem Physiksprung. dt wird begrenzt, im Hintergrund pausiert die Simulation automatisch. |
 
 ## 6. Debug-/Test-Hook
@@ -285,9 +306,16 @@ window.SIM = {
 
 Die Physik (`js/sim/*`) hängt weder vom DOM noch vom Renderer ab und läuft auch unter Node für `node --test`.
 
+## 6a. Betrieb auf Debian 13
+
+- nginx aus den Debian-Paketquellen; ausgeliefert wird **nur** der Webinhalt (keine Tests, SPEC/PLAN, `.git`).
+- Release-Struktur: `/var/www/c172/releases/<release-id>/` + Symlink `/var/www/c172/current`. Neues Release vollständig hochladen und prüfen, dann Symlink atomar umschalten; das vorherige Release bleibt für den **Rollback** (Symlink zurück) erhalten. Das Ansible-Playbook bildet genau das ab.
+- Caching: HTML immer revalidieren (`no-cache`); JS/CSS ebenfalls revalidieren (ETag), da nicht inhaltsadressiert; `immutable` nur für den versionierten `vendor/three/`-Pfad.
+- Korrekte MIME-Typen (`.js`/`.mjs` → `text/javascript`), gzip für Text, fehlende Dateien liefern **404** (keine SPA-Fallback-Seite), Webroot für nginx nur lesend.
+- HTTPS: über vorhandenen Reverse-Proxy oder nginx + certbot — konkret erst, wenn Domain/Infrastruktur bekannt sind; die Konfiguration enthält beide Varianten als dokumentierte Option.
+
 ## 7. Out of Scope (v1)
 Folgendes gehört nicht zu Version 1:
-- Kopfbewegung durch g-Kräfte und Kamera-Shake (bewusst abgewählt, später leicht nachrüstbar)
 - Floating Origin (erst jenseits von 200 km relevant)
 - Multiplayer, ATC, Navigation (VOR/GPS), Autopilot
 - Gemischregelung und Vergaservereisung
@@ -365,3 +393,16 @@ AK-01 bis AK-04 und AK-07 sind **Plausibilitätstests des Simulators**. Sie orie
 30. **AK-30 Pause/Hintergrund:** Pause friert `SIM.state.time` ein. Beim Verstecken des Tabs pausiert die Simulation automatisch, danach springt der Zustand nicht.
 31. **AK-31 Performance:** `SIM.perf()` meldet auf dem Referenz-Desktop bei Qualität Mittel ≥ 60 fps und ≤ 250 Draw Calls. Die Draw Calls werden über **beide** Render-Pässe eines Frames summiert. Die Messung erfolgt manuell bzw. im sichtbaren Browser-Tab.
 32. **AK-32 Konsole & Auslieferung:** Beim Laden und in 5 min Flug entstehen keine Console-Errors oder -Warnings. Die Seite läuft unverändert hinter nginx (`deploy/nginx.conf`, gzip und korrekter MIME-Typ für `.js`).
+
+**Qualität, Robustheit, Betrieb** (ergänzt in v1.1)
+
+33. **AK-33 Determinismus:** Eine aufgezeichnete Eingabefolge (60 s, `runway`-Start) ergibt bei simulierten Renderintervallen von 1/30, 1/60 und 1/144 s (headless, Loop-Funktion mit künstlicher Uhr) **bit-identische** Physikzustände nach gleicher Substep-Zahl.
+34. **AK-34 Render-Interpolation:** Die gerenderte Flugzeugpose liegt stets zwischen den letzten beiden Physikzuständen (α ∈ [0,1]); bei 144-Hz-Uhr zeigt die Folge der gerenderten Positionen im Geradeausflug keine Rückwärts- oder Doppelschritte (Positionsinkremente monoton, Varianz der Inkremente < 10 %).
+35. **AK-35 Fokusverlust:** Taste ← halten, dann `blur`/`visibilitychange` auslösen → Simulation pausiert, `controls.aileron` ist nach Fortsetzen 0, `state.time` springt nicht.
+36. **AK-36 Fehlerzustände:** Ohne WebGL2 (per Test-Flag simuliert) erscheint die Fehlermeldung statt schwarzem Canvas; ein simulierter `webglcontextlost` pausiert und zeigt den Neustart-Dialog; ein fehlschlagender Modul-Import zeigt „Erneut versuchen“.
+37. **AK-37 Kopfbewegung:** Bei 100 % bleibt der Kopfversatz in allen Szenarien (inkl. harter Landung 600 ft/min, Turbulenz 100 %) ≤ 2 cm und ≤ 1°, er kehrt binnen 2 s nach Ende der Anregung auf < 1 mm zurück; bei 0 % bzw. reduced motion ist er exakt 0.
+38. **AK-38 Menü-Bedienung:** Alle Menüs sind nur per Tastatur (Tab/Shift+Tab/Enter/Esc) bedienbar, Fokus bleibt im Dialog und kehrt zum Auslöser zurück; bei offenem Menü ändern Pfeiltasten `SIM.controls` nicht; Kontrast der Menütexte ≥ 4,5:1 (berechnet aus den CSS-Tokens).
+39. **AK-39 Kompletter Ablauf:** Ein skriptgesteuerter Testflug (headless, einfacher Regler) fliegt `runway` → Start → Platzrunde → Endanflug → Landung → Ausrollen bis Stillstand ohne Neustart, ohne Crash und ohne Bodendurchdringung > 5 cm; drei aufeinanderfolgende Landungen gelingen.
+40. **AK-40 Betrieb:** `nginx -t` mit `deploy/nginx.conf` ist fehlerfrei (Debian-13-Container oder VM); das Playbook legt Release-Verzeichnis + `current`-Symlink an; ein Rollback auf das vorige Release ist dokumentiert und praktisch geprüft; beim Seitenaufruf gibt es null Drittanbieter-Requests; eine fehlende Datei liefert 404.
+41. **AK-41 Testflug-Abnahme (Mensch):** Fünf standardisierte Kurzflüge — ruhiger Geradeausflug, kleine Korrekturen, Startlauf, Stall + Abfangen, Landung — werden vom Nutzer geflogen und in `TESTFLIGHTS.md` kurz bewertet. Mängel am Fluggefühl haben Vorrang vor neuen Features.
+

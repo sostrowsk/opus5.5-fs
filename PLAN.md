@@ -1,6 +1,6 @@
 # PLAN – Umsetzung „C172 Web“
 
-Basis: `SPEC.md` v1.0. Es gibt keinen Build und außer dem vendored `three` keine Pakete.
+Basis: `SPEC.md` v1.1. Es gibt keinen Build und außer dem vendored `three` keine Pakete.
 
 ## 1. Architektur
 
@@ -26,13 +26,18 @@ js/aircraft/model.js       Prozedurales C172-Außenmodell + Animationen (Ruder, 
 js/cockpit/cockpit.js      Innenraum-Geometrie, Hebel/Yoke-Animation, Hit-Zonen (Raycast) für Maus/Touch
 js/cockpit/instruments.js  Canvas-2D-Instrumente → Atlas-CanvasTexture, Anzeige-Dynamik (Lags)
 js/audio/audio.js          WebAudio-Graph: Motor, Prop, Wind, Stall-Horn, Reifen, Klappen, Anlasser
-js/input/input.js          Tastatur/Maus/Touch → Control-Demand (Rampen, Glättung), Kamera-Blick
+js/input/input.js          Tastatur/Maus/Touch → Control-Demand (Rampen, Glättung), Kamera-Blick, Koordinationshilfe
+js/cockpit/head.js         Kopfbewegung: gedämpftes Feder-Masse-System (≤ 2 cm / 1°), abschaltbar
 js/ui/ui.js                Menüs, Settings-Bindings, Datenleiste, Crash/Pause, Touch-Controls, Orientierung
 js/debug.js                window.SIM (Shape siehe SPEC §6)
 tests/physics.test.mjs     node --test: AK-01..18 headless (reine Sim ohne DOM)
 tests/heightfield.test.mjs node --test: Determinismus, Piste flach
 deploy/nginx.conf          Server-Block: static root, gzip (js/css/html/svg), Cache-Header, MIME
-deploy/ansible/playbook.yml  nginx installieren, Dateien kopieren, Site aktivieren (Debian 13)
+deploy/ansible/playbook.yml  nginx installieren, Release-Verzeichnis + current-Symlink, Site aktivieren, Rollback-Task (Debian 13)
+deploy/README.md           Betrieb: Upload, Prüfen, Umschalten, Rollback, Logs, HTTPS-Varianten
+tests/loop.test.mjs        node --test: Determinismus über Renderraten (AK-33), Interpolation (AK-34)
+tests/pattern.test.mjs     node --test: skriptgesteuerte Platzrunde mit 3 Landungen (AK-39)
+TESTFLIGHTS.md             Protokoll der menschlichen Testflüge (AK-41)
 .claude/launch.json        Preview: python3 -m http.server 8080
 README.md                  Start lokal, Tasten, Deployment
 ```
@@ -74,6 +79,16 @@ state = {
 - **Propeller:** Die Tabellen CT(J) und CP(J) enthalten je 8 Stützstellen und werden linear interpoliert. Unterhalb von 100 RPM gilt der Stand-/Anlaufbereich aus SPEC §3.2, dazwischen wird weich überblendet. Die RPM ist auf 0–3200 begrenzt. Die RPM-Dynamik folgt `I_prop·dω/dt = Q_engine − Q_prop − Q_friction`. Das Motordrehmoment ergibt sich aus der Leistungskurve (RPM) × Gasstellung (inkl. Leerlauf-Minimum) × σ^1,1.
 - **Boden:** Pro Kontaktpunkt (3 Räder und 6 Strukturpunkte) wird die Eindringtiefe über `groundHeight(x,z)` (LOD-0-Raster) bestimmt; Wasser über `surface()`. Die Rad-Normalkraft ist `k·d + c·ḋ` (≥ 0). Die Reibung wird im Radkoordinatensystem berechnet: längs Rollwiderstand und Bremse, quer eine Seitenkraft mit Sättigung (Reifenmodell linear bis zur Haftgrenze). Das Bugrad lenkt über das Seitenruder. Strukturpunkte mit Bodenkontakt lösen einen Crash aus.
 - **Parkbremse im Stand:** Unterhalb von 0,05 m/s wird die Haftreibung über eine Geschwindigkeits-Dämpfung stabilisiert, damit das Flugzeug nicht „kriecht“.
+
+### 2.1a Hauptschleife (`main.js`, testbar als reine Funktion)
+- `createLoop({ step, render, now })` — reine Funktion ohne DOM-Abhängigkeit, damit AK-33/34 unter Node mit künstlicher Uhr laufen.
+- Pro Frame: `acc += min(frameDt, 0.1)`; solange `acc ≥ DT` und `< 8` Schritte: `prev = copy(state)`, `step(DT)`, `acc -= DT`; Überschuss verwerfen und zählen. Danach `α = acc/DT`, gerendert wird `lerp(prev.p, state.p, α)` / `slerp(prev.q, state.q, α)`. Kamera und Außenmodell nutzen **denselben** interpolierten Zustand; Instrumente dürfen den letzten Physikzustand lesen.
+- Eingaben werden einmal pro Physikschritt abgetastet (Demand-Rampen laufen im Physiktakt, nicht im Frame-Takt) → Determinismus.
+- `blur`/`visibilitychange` → Pause, `input.clearAll()`, beim Fortsetzen `lastTime = now()`.
+
+### 2.1b Kopfbewegung (`head.js`)
+- Zustand: Versatz `o` (3D, m) und Drehung `r` (Nick/Roll, rad), je als kritisch bis leicht unterkritisch gedämpfte Feder (f ≈ 2,5 Hz, ζ ≈ 0,7), angeregt durch `−(a_pilot − a_1g)` im Body-System (Lastvielfache, Querbeschleunigung), Turbulenzanteil und Fahrwerks-Impulse (Kraftänderung pro Schritt). Harte Clamps 0,02 m / 1°. Skaliert mit Setting 0..1; bei 0 wird nichts berechnet (exakt 0).
+- Läuft im Physiktakt (deterministisch), angewandt auf die Kamera nach der Interpolation.
 
 ### 2.2 Heightfield (`heightfield.js`)
 - `h(x,z)` = Basis-fBm (5 Oktaven, λ = 6 km) + Ridged-Berge (Maske über Niederfrequenz-Noise) − Tal- und Seebildung.
@@ -135,7 +150,9 @@ state = {
 
 ### 2.8 Input (`input.js`)
 - Eine Demand-Schicht mit Zielwerten und Rampen erzeugt `controls` (einzige Quelle für die Physik). Die Rückstellung geht immer auf **0**; `trim` ist ein eigener Kanal. Tastatur, Maus-Yoke und Touch schreiben Demands, Priorität hat die zuletzt aktive Quelle.
-- **Kamera-Blick:** yaw/pitch mit leichter Dämpfung (kritisch gedämpfte Feder, nur für die Blicksteuerung, also kein Shake).
+- **Kamera-Blick:** yaw/pitch mit leichter Dämpfung (kritisch gedämpfte Feder für die Blicksteuerung); Kopfbewegung kommt additiv aus `head.js`.
+- **Koordinationshilfe:** optional, nur > 30 m AGL, setzt Seitenruder-Demand ∝ −β (+ Querruder-Anteil); jede manuelle Seitenruder-Eingabe hat Vorrang. Nur Eingabe, keine Physik-Änderung.
+- **Menü offen → Input gesperrt:** Tasten gehen an den Dialog, nicht an die Flugsteuerung.
 
 ### 2.9 Audio (`audio.js`)
 - Der Graph wird einmalig bei der ersten Interaktion aufgebaut. Parameter werden pro Frame über `setTargetAtTime` gesetzt, damit keine Klicks entstehen.
@@ -161,15 +178,16 @@ Die Reihenfolge folgt dem Prinzip „erst das Cockpit-Erlebnis als vertikaler Du
    - Zwei-Pass-Rendering mit Schatten
    - Einfacher Himmel (Farbverlauf) und die LOD-0-Nahkacheln ohne Fern-Mesh
    - Minimaler Tastatur-Input
-   - **Gate:** Start, Platzrunde und Landung sind per Tastatur fliegbar. Der Screenshot erfüllt die Bildabnahme aus AK-24.
+   - Hauptschleife mit Render-Interpolation (2.1a) und Kopfbewegung (2.1b) inkl. `tests/loop.test.mjs`
+   - **Gate:** Start, Platzrunde und Landung sind fliegbar (`tests/pattern.test.mjs`, AK-39). Der Screenshot erfüllt die Bildabnahme aus AK-24. **Entscheid:** Erst weiter, wenn Steuerung, Perspektive und Energiegefühl überzeugen — sonst zuerst Beiwerte, Eingaberampen und Kontaktmodell nachschärfen.
 4. **AP4 Input komplett:** Tastatur, Maus (Look, Yoke-Modus, Klick-Hit-Zonen) und Touch-Layout.
 5. **AP5 Audio.**
 6. **AP6 Terrain komplett:** LOD 1, Fern-Mesh (Double Buffer), Terrain-Shader, `water.js`.
 7. **AP7 Himmel, Licht, Wolken:** `sky.js` (Streuung, Sterne, Nacht-Beleuchtung), `clouds.js`, Nebelkopplung.
 8. **AP8 Flugplatz & Vegetation:** `airport.js`, `vegetation.js`.
-9. **AP9 UI:** Menü, Settings (`config.js`, localStorage), Pause, Crash, Hilfe, Datenleiste, Orientierungshinweis, Qualitätsstufen, Außenkamera.
+9. **AP9 UI** (inkl. App-Zustände, WebGL2-Check, Lade-/Fehler-/Context-Loss-Dialoge, native `<dialog>` mit Fokusführung, reduced motion, Kontrast, Input-Sperre bei offenem Menü): Menü, Settings (`config.js`, localStorage), Pause, Crash, Hilfe, Datenleiste, Orientierungshinweis, Qualitätsstufen, Außenkamera.
 10. **AP10 Debug-Hook:** `debug.js` mit der vollen Shape aus SPEC §6. `perf()` summiert beide Pässe. Hinweis: `SIM` wird schon ab AP2/AP3 minimal angelegt und hier vervollständigt.
-11. **AP11 Deploy:** `nginx.conf`, Ansible-Playbook, README vervollständigen.
+11. **AP11 Deploy:** `nginx.conf` (MIME, gzip, Revalidierung, 404, immutable nur für vendor), Ansible-Playbook mit Release-Verzeichnis + `current`-Symlink + Rollback-Task, `deploy/README.md`, README. Prüfung `nginx -t` in einem Debian-13-Container, falls Docker verfügbar, sonst ausdrücklich als offen markieren.
 12. **AP12 Feinschliff & Performance:** Draw Calls prüfen, Konsole sauber halten.
 
 ## 4. Risiken / Stolpersteine & Gegenmittel
@@ -193,6 +211,10 @@ Die Reihenfolge folgt dem Prinzip „erst das Cockpit-Erlebnis als vertikaler Du
 | Tastenkonflikte (F5 = Reload, Ctrl-Kombis) | `preventDefault` nur für eigene Tasten, außer bei gedrückter Meta/Ctrl-Taste. F5/F6 haben die Alternativen F/V. |
 | Transparenz-Sortierung der Wolken und Propellerscheibe | Wolken-Sprites mit `depthWrite: false`, Sortierung pro Wolke nach Kameradistanz. Die Prop-Scheibe liegt in einer eigenen `renderOrder`. |
 | Draw Calls explodieren | Instancing für Bäume, Wolken und Befeuerung. Die Cockpit-Geometrie wird pro Material gemerged (`mergeGeometries` selbst implementiert, keine Addons), Terrain ≤ ~120 Kacheln. |
+| Mikroruckeln durch 120-Hz-Physik vs. 60/144-Hz-Display | Render-Interpolation (2.1a), AK-34 |
+| Hängende Ruder nach Fokusverlust | `input.clearAll()` bei blur/visibilitychange, AK-35 |
+| Kopfbewegung wirkt billig/übelkeitserregend | Harte Clamps 2 cm/1°, keine Zufallsbewegung, Default 50 %, reduced motion → 0, AK-37 |
+| Fehlerhaftes Deployment ohne Rückweg | Release-Verzeichnisse + Symlink, Rollback im Playbook, AK-40 |
 | Überengineering | Keine ECS, keine Event-Bus-Frameworks, keine Klassenhierarchien. Die Module exportieren Funktionen bzw. einfache Objekte. |
 
 ## 5. Test- und Abnahmeschritte
