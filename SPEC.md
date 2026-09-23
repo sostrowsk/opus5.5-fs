@@ -61,7 +61,7 @@ Grundsatz: **So viel natives JS wie möglich, so wenige Pakete wie nötig.** Die
 - **Fahrtmesser-Kalibrierung:** Die Anzeige wandelt KCAS → KIAS über eine POH-nahe Tabelle je Klappenstellung (Tabelle im PLAN). `state` liefert `cas_kt` und `ias_kt`.
 - Ruderwirksamkeit ergibt sich ausschließlich aus dem (Slipstream-)Staudruck — bei geringer Anströmung werden die Ruder weich, im Propellerstrahl bleibt das Seitenruder am Boden wirksam. Die Steuerflächen folgen der Eingabe mit begrenzter Stellrate (≈ 90°/s), nicht sprunghaft.
 - **Keine künstlichen Hilfen in der Physik:** keine Landemagnetik, kein Auto-Level, kein heimliches Halten von Höhe/Fahrt. Hilfen (§4.3) wirken nur auf die Eingabe und sind sichtbar benannt.
-- Propellereffekte: Drehmoment-Rollmoment, P-Faktor (Giermoment ∝ α bei hoher Leistung), Slipstream-Staudruck auf Höhen- und Seitenleitwerk.
+- Propellereffekte: Drehmoment-Rollmoment, P-Faktor (Giermoment ∝ α bei hoher Leistung), Drall des Propellerstrahls am Seitenleitwerk (vor allem bei hoher Leistung und kleiner Fahrt), Slipstream-Staudruck auf Höhen- und Seitenleitwerk. Festes Rigging wie beim echten C172P (leicht nach rechts geneigte Schubachse, Querruder-Grundeinstellung, bodenseitig eingestellte Trimmkante am Seitenruder); eine Seiten- oder Querrudertrimmung im Cockpit gibt es nicht.
 
 **Motor/Propeller:** Die Drehzahl ergibt sich dynamisch aus dem Gleichgewicht zwischen Motordrehmoment (Gasstellung, Dichte) und Propellerdrehmoment (CP(J)). Bei starrem Propeller steigt die RPM daher mit der Fahrt. Das Trägheitsmoment von Motor und Propeller ist als Parameter vorhanden. Die Zündung hat die Stellungen OFF / BOTH / START: Der Anlasser dreht bei START auf etwa 150–250 RPM, oberhalb von ~300 RPM läuft der Motor dann selbst.
 
@@ -340,7 +340,7 @@ AK-01 bis AK-04 und AK-07 sind **Plausibilitätstests des Simulators**. Sie orie
 5. **AK-05 Stall clean:** Leerlauf, Klappen 0, Fahrtabbau mit ~1 kt/s. `stalled` wird bei **47–54 KCAS** true, die Anzeige liegt laut Kalibriertabelle bei ≈ 42–47 KIAS. Das Stall-Horn ertönt 5–10 kt vorher.
 6. **AK-06 Stall mit Klappen 30:** Wie AK-05, `stalled` bei **42–49 KCAS** (Anzeige ≈ 30–38 KIAS).
 7. **AK-07 Gleitflug:** Leerlauf, 65 KIAS, Klappen 0. Die Gleitzahl (Horizontaldistanz/Höhenverlust über 60 s) liegt bei 8–10.
-8. **AK-08 Trimmstabilität:** `cruise`, Yoke neutral, Turbulenz 0. Nach 60 s hands-off liegt die Höhe innerhalb von ±150 ft und der Kurs innerhalb von ±10°. Die Höhenamplitude der Phygoide wächst nicht: Das Maximum im zweiten 30-s-Fenster ist ≤ dem Maximum im ersten.
+8. **AK-08 Trimmstabilität:** `cruise`, Yoke neutral, Turbulenz 0. Nach 60 s hands-off liegt die Höhe innerhalb von ±150 ft, der Kurs innerhalb von ±5° und die Querlage unter 5°. Die Höhenamplitude der Phygoide wächst nicht: Das Maximum im zweiten 30-s-Fenster ist ≤ dem Maximum im ersten. **AK-08b Hands-off Richtungsstabilität** (ruhige Luft, nur festes Rigging, keine Seiten-/Querrudertrimmung): Reiseflug 105 KIAS/≈ 2400 RPM bei 800, 1000 und 1089 kg sowie Endanflug (Klappen 20, 70 KIAS, getrimmt, mit Leistung) bei denselben Massen – jeweils 60 s hands-off Kursänderung ≤ 5° und Querlage < 5°. Im Vy-Steigflug mit Vollgas ohne Seitenruder ist eine leichte Linkstendenz erwünscht, die Querlage bleibt nach 30 s aber unter 10°.
 9. **AK-09 Rollrate:** 105 KIAS, voller Querruderausschlag. Die Rollrate liegt bei 30–60°/s, das negative Wendemoment ist messbar (β > 0,5° in Gegenrichtung).
 10. **AK-10 Propellereffekte:** Beim Startlauf mit Vollgas und Seitenruder neutral zieht die Maschine nach links (Kursdrift > 3° nach 5 s ohne Korrektur).
 11. **AK-11 Klappen:** Das Ausfahren von Klappen 0→30 bei 80 KIAS erzeugt ein Nickmoment (Pitch-Änderung > 2° ohne Korrektur binnen 3 s) und senkt die Stallgeschwindigkeit wie in AK-06.
@@ -368,7 +368,7 @@ AK-01 bis AK-04 und AK-07 sind **Plausibilitätstests des Simulators**. Sie orie
     - Bei 12 h liegt die Sonnenhöhe über 30°, bei 6,5 h und 18,5 h unter 10° mit orangeroter Horizontfarbe.
     - Bei 0 h sind Sterne sichtbar (`stars.material.opacity` > 0,5) und die Panelbeleuchtung ist an (Instrument-Emissive > 0).
     - Die Instrumente sind nachts ablesbar. Auf dem Screenshot unterscheidet sich die Luminanz zwischen ASI-Nadel und Zifferblatt um mindestens 40 %.
-22. **AK-22 Wolken:** Bei Bewölkung 0 % gibt es 0 Wolkeninstanzen, bei 80 % mindestens 30 Wolken im Umkreis von 10 km. Innerhalb einer Wolke (`cloudDensityAt(pos)` > 0,5) sinkt die Fog-Sichtweite auf < 200 m.
+22. **AK-22 Wolken:** Bei Bewölkung 0 % gibt es 0 Wolkeninstanzen, bei 80 % mindestens 30 Wolken im Umkreis von 10 km. Innerhalb einer Wolke (`cloudDensityAt(pos)` > 0,5) sinkt die Fog-Sichtweite auf < 100 m.
 23. **AK-23 Flugzeuganimation:** In der Außenansicht bewegen sich die Ruderflächen sichtbar mit den Eingaben (Rotation des jeweiligen Meshs ≠ 0 bei Eingabe ≠ 0), der Propeller zeigt ab 600 RPM die Blur-Scheibe und die Räder drehen beim Rollen.
 24. **AK-24 Cockpit:** Der Yoke bewegt sich mit Nick- und Roll-Eingabe, Gas- und Klappenhebel bewegen sich mit ihren Werten. Alle klickbaren Elemente reagieren auf Pointer-Events (Gas per Drag ändert `controls.throttle`, der Klappenhebel ändert `flapsCmd`).
     **Bildabnahme** (Screenshot bei Default-FOV und 1920×1080, `runway`, 10 h):

@@ -49,9 +49,10 @@ export const C172 = {
     diskArea: Math.PI * 0.9525 * 0.9525,
     slipH: 0.32, // Anteil des Slipstream-Staudrucks am Höhenleitwerk
     slipV: 0.55, // … am Seitenleitwerk
-    pFactor: 0.9, // m/rad – Versatz der Schubachse pro Anstellwinkel (P-Faktor)
-    swirl: 0.75, // Giermoment (N·m) pro N·m Propellermoment (Drall auf die Seitenflosse)
-    torqueRoll: 0.6, // Anteil des Wellenmoments, der als Rollmoment wirkt (Rest hebt der Drall am Flügel auf)
+    pFactor: 0.1, // m/rad – Versatz des Schubangriffspunkts pro Anstellwinkel (P-Faktor)
+    swirl: 1.1, // Giermoment (N·m) pro N·m Propellermoment bei vollem Strahlanteil vi/(V+vi) = 1 (Drall auf die Seitenflosse)
+    torqueRoll: 0.15, // Anteil des Wellenmoments, der als Rollmoment wirkt (den Rest hebt der Drall an Flügel/Rumpf auf)
+    rightThrust: 1.0 * D, // Schubachse nach rechts geneigt (festes Rigging gegen den leistungsabhängigen Drall)
     inertiaProp: 1.3, // kg·m² nur Propeller (Kreiseleffekt)
     thrustZ: 0.0, // m Schubachse unter (+)/über (−) dem Schwerpunkt
     center: [2.05, 0, -0.05], // Propellernabe (Body)
@@ -105,9 +106,12 @@ export const C172 = {
     Cnda: -0.008, // negatives Wendemoment
     Cndr: 0.065,
 
-    // Rigging: gleicht Propellerdrall/Moment im Reiseflug aus (feste Trimmkanten)
-    ClRig: 0.00063,
-    CnRig: 0.00077,
+    // Festes Rigging wie beim echten C172P (keine Seiten-/Querrudertrimmung im Cockpit): Querruder-Grundeinstellung
+    // (ClRig, Staudruck am Flügel) und bodenseitig eingestellte Trimmkante am Seitenruder (CnRig, im Propellerstrahl).
+    // Zusammen mit der geneigten Schubachse (prop.rightThrust) fliegt die Maschine im Reise- und Anflugbereich
+    // (800–1089 kg) hands-off geradeaus (AK-08b); bei Vollgas/kleiner Fahrt bleibt die Linkstendenz (AK-10).
+    ClRig: 0.000157,
+    CnRig: -0.000065,
   },
 
   // Klappen: Stellungen und Beiwerte über dem Klappenwinkel (°)

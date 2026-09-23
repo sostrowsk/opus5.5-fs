@@ -38,7 +38,9 @@ test('AK-37 Kopfbewegung: Turbulenz 100 % → ≤ 2 cm und ≤ 1°; bei 0 % exak
   };
   const full = run(1), off = run(0);
   report('AK-37 Turbulenz', { maxOff_cm: full.maxOff * 100, maxRot_deg: full.maxRot / DEG });
-  assert.ok(full.maxOff > 0.001, 'Turbulenz bewegt den Kopf spürbar');
+  // spürbar, aber dezent (Regression: früher 0,5 cm / 0,03° – praktisch unsichtbar)
+  assert.ok(full.maxOff >= 0.007, `Turbulenz bewegt den Kopf spürbar: ${(full.maxOff * 100).toFixed(2)} cm`);
+  assert.ok(full.maxRot >= 0.25 * DEG, `Turbulenz dreht den Kopf spürbar: ${(full.maxRot / DEG).toFixed(2)}°`);
   assert.ok(full.maxOff <= HEAD.maxOffset, `Versatz ${(full.maxOff * 100).toFixed(2)} cm`);
   assert.ok(full.maxRot <= 1 * DEG, `Drehung ${(full.maxRot / DEG).toFixed(2)}°`);
   assert.ok(off.series.every((e) => e.o.x === 0 && e.o.y === 0 && e.o.z === 0 && e.o.pitch === 0 && e.o.roll === 0));
@@ -68,7 +70,8 @@ test('AK-37 Kopfbewegung: harte Landung 600 ft/min → ≤ 2 cm / ≤ 1°, danac
   const tail = r.series.filter((e) => e.t >= 27);
   const lastMax = Math.max(...tail.map((e) => e.off));
   report('AK-37 Landung', { tdVs, maxOff_cm: r.maxOff * 100, maxRot_deg: r.maxRot / DEG, rest_mm: lastMax * 1000 });
-  assert.ok(r.maxOff > 0.005, 'Aufsetzstoß ist spürbar');
+  assert.ok(r.maxOff >= 0.014, `Aufsetzstoß ist spürbar: ${(r.maxOff * 100).toFixed(2)} cm`);
+  assert.ok(r.maxRot >= 0.6 * DEG, `Aufsetzstoß nickt den Kopf spürbar: ${(r.maxRot / DEG).toFixed(2)}°`);
   assert.ok(r.maxOff <= HEAD.maxOffset, `Versatz ${(r.maxOff * 100).toFixed(2)} cm`);
   assert.ok(r.maxRot <= 1 * DEG, `Drehung ${(r.maxRot / DEG).toFixed(2)}°`);
   assert.ok(lastMax < 0.001, `Rest ${(lastMax * 1000).toFixed(2)} mm im Stand`);

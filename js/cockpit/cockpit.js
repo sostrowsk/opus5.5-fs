@@ -399,8 +399,8 @@ export function createCockpit(instruments) {
     darkDouble: std(0x0c0c0d, 0.7, 0, { side: THREE.DoubleSide }),
     glare: std(0x1c1c1d, 0.9),
     yoke: std(0x1e1f21, 0.38),
-    trim: std(0x9b958a, 0.85),
-    trimDark: std(0x5d5850, 0.85),
+    trim: std(0x80786c, 0.92), // Innenverkleidung: mattes Grau-Beige (Taupe), klar dunkler als Pistenmarkierungen draußen
+    trimDark: std(0x4d4841, 0.9),
     headliner: std(0xbdb6a8, 0.95),
     carpet: std(0x3a3632, 1.0),
     seat: std(0x544a40, 0.95),
@@ -503,9 +503,13 @@ export function createCockpit(instruments) {
 
   // ---------------------------------------------------------------- Glareshield (gepolstert, Nase zum Piloten)
   {
+    // Der Teil unterhalb der Panel-Oberkante liegt HINTER dem Panel (x ≥ Panel-Rückseite + 3 mm): eine Fläche
+    // bei x = PANEL_X wäre koplanar mit der Panelfront (Z-Fighting → gezackte schwarze Splitter über der
+    // oberen Instrumentenreihe, dem Audio-Panel und dem Placard).
+    const xb = PANEL_X + 0.015;
     const prof = [
-      [0.76, -0.3], [0.726, -0.3], [0.714, -0.307], [0.716, -0.318], [0.735, -0.326], [0.8, -0.33],
-      [0.9, -0.322], [1.0, -0.3], [1.055, -0.284], [1.055, -0.26], [0.76, -0.26],
+      [0.726, -0.3], [0.714, -0.307], [0.716, -0.318], [0.735, -0.326], [0.8, -0.33],
+      [0.9, -0.322], [1.0, -0.3], [1.055, -0.284], [1.055, -0.26], [xb, -0.26], [xb, -0.3],
     ];
     const g = extrudeXZ(prof, -PANEL_Y + 0.005, PANEL_Y - 0.005);
     // Ecken an die Rumpfkontur anpassen (unter der Scheibenwölbung)

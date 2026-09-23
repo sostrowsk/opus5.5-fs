@@ -500,6 +500,30 @@ export function createInstruments() {
     oilT: 40, oilP: 0, suction: 0, amp: 0, egt: 0, fuelL: 19, fuelR: 20, clock: 10,
     lastV: null, accLong: 0, initialized: false,
   };
+  // Self-Heal: nicht-endliche Anzeigewerte (z. B. nach einem numerischen Physikfehler) dürfen nie das Zeichnen
+  // abbrechen (Canvas-Gradienten werfen bei NaN) – sie werden neu aufgesetzt bzw. neutral gestellt.
+  const NEUTRAL = {
+    asi: 0, pitch: 0, bank: 0, alt: 0, kollsman: 1013, turn: 0, ball: 0, ballVel: 0, hi: 0, hiOffset: 0, vsi: 0,
+    rpm: 0, compass: 0, compassVel: 0, compassErr: 0, oilT: 40, oilP: 0, suction: 0, amp: 0, egt: 0, fuelL: 19,
+    fuelR: 20, clock: 10, accLong: 0,
+  };
+  const NEUTRAL_KEYS = Object.keys(NEUTRAL);
+  let warned = false;
+  const warnOnce = (msg) => {
+    if (warned) return;
+    warned = true;
+    console.warn(`[Instrumente] ${msg}`);
+  };
+  function displayFinite() {
+    for (const k of NEUTRAL_KEYS) if (!Number.isFinite(d[k])) return false;
+    return true;
+  }
+  function neutralize() {
+    for (const k of NEUTRAL_KEYS) if (!Number.isFinite(d[k])) d[k] = NEUTRAL[k];
+    if (d.lastV !== null && !Number.isFinite(d.lastV)) d.lastV = null;
+  }
+  const stateFinite = (s) => Number.isFinite(s.ias_kt + s.pitch_deg + s.bank_deg + s.heading_deg + s.vs_fpm + s.rpm
+    + s.staticPressure + s.g + s.ay_g + s.v[0] + s.v[2] + s.w[0] + s.w[1] + s.w[2] + s.q[0] + s.q[1] + s.q[2] + s.q[3]);
 
   /** Instrumente sofort auf den Zustand setzen (Reset/Szenariowechsel). */
   function snap(s, env) {
@@ -523,6 +547,7 @@ export function createInstruments() {
     d.oilT = s.rpm > 300 ? 150 : 60;
     d.suction = s.rpm > 300 ? suction(s.rpm) : 0;
     d.initialized = true;
+    neutralize();
   }
 
   const oilPressure = (rpm) => clamp(20 + rpm * 0.018, 0, 70);
@@ -533,7 +558,13 @@ export function createInstruments() {
   /** Anzeigewerte fortschreiben (dt in s Simulationszeit). */
   function update(s, env, dt) {
     if (!d.initialized) snap(s, env);
-    if (dt <= 0) return;
+    if (!(dt > 0)) return;
+    if (!stateFinite(s)) {
+      // Zustand unbrauchbar: Anzeige einfrieren statt NaN zu übernehmen
+      warnOnce('nicht-endlicher Flugzustand – Anzeige eingefroren');
+      neutralize();
+      return;
+    }
     // Verzögerungen 1. Ordnung sind für jedes dt exakt; die Schwinger (Kugel, Kompass) laufen in Teilschritten
     d.asi = lag(d.asi, s.ias_kt, dt, 0.15);
     // Kreisel-Horizont: leichte Nachlaufträgheit
@@ -586,6 +617,10 @@ export function createInstruments() {
     d.amp = lag(d.amp, s.rpm > 1000 ? 2 : s.rpm > 300 ? -1 : -3, dt, 0.5);
     d.egt = lag(d.egt, burning ? 0.35 + (s.rpm / 2700) * 0.5 : 0, dt, 4);
     d.clock = env ? +env.timeOfDay : d.clock;
+    if (!displayFinite()) {
+      warnOnce('nicht-endlicher Anzeigewert – Instrumente neu aufgesetzt');
+      snap(s, env);
+    }
   }
 
   /** HI an den Magnetkompass angleichen (Einstellknopf). */
@@ -608,8 +643,15 @@ export function createInstruments() {
     ctx.rect(x, y, w, h);
     ctx.clip();
     ctx.translate(x, y);
-    fn(ctx, w, h);
-    ctx.restore();
+    try {
+      fn(ctx, w, h);
+      ctx.restore();
+    } catch (e) {
+      warnOnce(`Zeichenfehler in „${name}“: ${e.message}`); // nie eine Exception pro Frame
+      // Zellen werden nur auf oberster Ebene gezeichnet: den ganzen Stapel abbauen (auch innere save() der
+      // Zellfunktion; restore() auf leerem Stapel ist wirkungslos), damit keine Clip/Transform-Reste bleiben
+      for (let i = 0; i < 16; i++) ctx.restore();
+    }
   }
 
   function drawAI(x) {
@@ -917,6 +959,7 @@ export function createInstruments() {
 
   /** Alle dynamischen Zellen neu zeichnen und die Textur zum Hochladen markieren. */
   function draw() {
+    neutralize();
     drawCell('asi', (x) => {
       x.drawImage(bg.asi, 0, 0);
       needle(x, R, R, asiAngle(d.asi), R * 0.84, 9, 0.2);

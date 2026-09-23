@@ -193,7 +193,7 @@ test('AK-07 Gleitflug: Leerlauf, 65 KIAS, Klappen 0 → Gleitzahl 8–10 (60 s)'
 });
 
 // ------------------------------------------------------------------------------------------ Stabilität & Steuerung
-test('AK-08 Trimmstabilität: cruise hands-off 60 s → Höhe ±150 ft, Kurs ±10°, Phygoide wächst nicht', () => {
+test('AK-08 Trimmstabilität: cruise hands-off 60 s → Höhe ±150 ft, Kurs ±5°, Querlage < 5°, Phygoide wächst nicht', () => {
   for (const kick of [0, 5]) {
     const { ac, ctl, s } = setup();
     applyScenario(ac, 'cruise', ctl);
@@ -204,22 +204,58 @@ test('AK-08 Trimmstabilität: cruise hands-off 60 s → Höhe ±150 ft, Kurs ±1
       const v = s.v, vl = Math.hypot(...v);
       for (let k = 0; k < 3; k++) v[k] *= (vl + kick * KT) / vl;
     }
-    let max1 = 0, max2 = 0, maxAlt = 0, maxHdg = 0;
+    let max1 = 0, max2 = 0, maxAlt = 0, maxHdg = 0, maxBank = 0;
     run(ac, ctl, 60, (s, t) => {
       const d = Math.abs(s.alt_ft - alt0);
       if (t < 30) max1 = Math.max(max1, d);
       else max2 = Math.max(max2, d);
       maxAlt = Math.max(maxAlt, d);
       maxHdg = Math.max(maxHdg, Math.abs(hdgErr(s.heading_deg, h0)));
+      maxBank = Math.max(maxBank, Math.abs(s.bank_deg));
     });
-    report('AK-08', { kick, maxAlt, maxHdg, max1, max2 });
+    report('AK-08', { kick, maxAlt, maxHdg, maxBank, max1, max2 });
     assert.ok(!s.crashed);
     assert.ok(maxAlt <= 150, `Höhenabweichung ${maxAlt.toFixed(1)} ft (Anregung ${kick} kt)`);
-    assert.ok(maxHdg <= 10, `Kursabweichung ${maxHdg.toFixed(2)}° (Anregung ${kick} kt)`);
+    assert.ok(maxHdg <= 5, `Kursabweichung ${maxHdg.toFixed(2)}° (Anregung ${kick} kt)`);
+    assert.ok(maxBank < 5, `Querlage ${maxBank.toFixed(2)}° (Anregung ${kick} kt)`);
     // ohne Anregung gibt es keine Phygoide – dort nur numerische Toleranz (1 ft), mit Anregung streng
     const tol = kick ? 0 : 1;
     assert.ok(max2 <= max1 + tol, `Phygoide wächst: ${max1.toFixed(1)} → ${max2.toFixed(1)} ft (Anregung ${kick} kt)`);
     if (kick) assert.ok(max1 > 10, `Phygoide nicht angeregt (${max1.toFixed(1)} ft)`);
+  }
+});
+
+test('AK-08b Hands-off Richtungsstabilität: Reiseflug/Endanflug 800–1089 kg → 60 s Kurs ≤ 5°, Querlage < 5°; Vy-Steigflug < 10°', () => {
+  // ruhige Luft, nur festes Rigging (keine Seiten-/Querrudertrimmung), Yoke/Pedale neutral
+  for (const sc of ['cruise', 'final']) {
+    for (const mass of [800, 1000, 1089]) {
+      const { ac, ctl, s } = setup({ mass });
+      const info = applyScenario(ac, sc, ctl);
+      assert.ok(info.converged, `${sc}/${mass} kg nicht getrimmt`);
+      if (sc === 'cruise') assert.ok(Math.abs(s.rpm - 2400) < 60, `Reiseflug-RPM ${s.rpm.toFixed(0)} (${mass} kg)`);
+      else assert.ok(s.flapsDeg === 20 && ctl.throttle > 0.2, `Endanflug mit Klappen 20 und Leistung (${mass} kg)`);
+      const h0 = s.heading_deg;
+      let maxHdg = 0, maxBank = 0;
+      run(ac, ctl, 60, (s) => {
+        maxHdg = Math.max(maxHdg, Math.abs(hdgErr(s.heading_deg, h0)));
+        maxBank = Math.max(maxBank, Math.abs(s.bank_deg));
+      });
+      report('AK-08b', { sc, mass, dHdg: hdgErr(s.heading_deg, h0), maxHdg, maxBank });
+      assert.ok(!s.crashed);
+      assert.ok(maxHdg <= 5, `${sc} ${mass} kg: Kursänderung ${maxHdg.toFixed(2)}°`);
+      assert.ok(maxBank < 5, `${sc} ${mass} kg: Querlage ${maxBank.toFixed(2)}°`);
+    }
+  }
+  // Vy-Steigflug mit Vollgas, Seitenruder neutral: Linkstendenz erlaubt, aber keine Spirale
+  for (const mass of [800, 1089]) {
+    const { ac, ctl, s } = setup({ mass, ground: flatGround(0) });
+    const tr = trimAircraft(ac, { x: 0, z: 0, alt: 2000 * FT, heading: 270, kias: 74, flapsDeg: 0, throttle: 1 }, ctl);
+    assert.ok(tr.converged);
+    const h0 = s.heading_deg;
+    run(ac, ctl, 30);
+    report('AK-08b Vy', { mass, bank: s.bank_deg, dHdg: hdgErr(s.heading_deg, h0) });
+    assert.ok(Math.abs(s.bank_deg) < 10, `Vy ${mass} kg: Querlage nach 30 s ${s.bank_deg.toFixed(1)}°`);
+    assert.ok(hdgErr(s.heading_deg, h0) < 0, 'Vy: Linkstendenz erwartet');
   }
 });
 

@@ -9,7 +9,7 @@
 // Zustands-Ausgaben: elevatorDeg/trimDeg positiv = Nase-hoch-Richtung (Höhenruder-Hinterkante hoch).
 import {
   DEG, RAD, KT, FT, G0, clamp, lerp, smoothstep, interp, interpExtrap,
-  cross, qIntegrate, qToEuler, bodyToThree, threeToBody, wrap360,
+  cross, qIntegrate, qNormalize, qToEuler, bodyToThree, threeToBody, wrap360,
 } from './math.js';
 import { C172 } from './c172.js';
 import { isa, casFromTas, windAt, updateGusts, createAtmosphere, pressureAltitude } from './atmosphere.js';
@@ -20,6 +20,7 @@ export const CRASH_TEXT = {
   water: 'Wasserkontakt',
   overload: 'Strukturversagen – Bruchlast überschritten',
   prop: 'Propeller hat den Boden berührt – Motor ausgefallen',
+  numerical: 'Numerischer Fehler – Simulation angehalten',
 };
 
 export function createControls() {
@@ -115,6 +116,7 @@ export function createAircraft(opts = {}) {
     _wind: [0, 0, 0],
     _o: {},
     _eff: {},
+    _bak: { p: [0, 0, 0], v: [0, 0, 0], q: [1, 0, 0, 0], w: [0, 0, 0], act: [0, 0, 0], rpm: 0, thrEff: 0, flapsDeg: 0 },
   };
   if (!ac.ground) throw new Error('createAircraft: ground provider fehlt');
   setMass(ac, opts.mass ?? cfg.massDefault);
@@ -282,6 +284,11 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const qSlip = Tpos / P.diskArea;
   const qH = qW + P.slipH * qSlip; // Staudruck am Höhenleitwerk
   const qV = qbar + P.slipV * qSlip; // … am Seitenleitwerk
+  // Propellerstrahl (Impulstheorie): induzierte Geschwindigkeit vi an der Scheibe. kSlip = vi/(V+vi) ist das Maß
+  // für „hohe Leistung bei kleiner Fahrt“: im Stand 1, Vy-Steigflug ≈ 0,14, Reiseflug/Endanflug ≈ 0,05.
+  const Va = Math.max(0, u);
+  const vi = 0.5 * (Math.sqrt(Va * Va + (2 * Tpos) / (rho * P.diskArea)) - Va);
+  const kSlip = Va + vi > 1e-3 ? vi / (Va + vi) : 0;
 
   // Klappen & Bodeneffekt
   const fd = s.flapsDeg;
@@ -332,7 +339,7 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const ClW = Clr * rh + A.Clda * da + dClStall + A.ClRig;
   const Cnp = -CLw / 10;
   const CnB = A.Cnb * sb + A.Cnr * rh;
-  const CnW = Cnp * ph + A.Cnda * da + A.CnRig;
+  const CnW = Cnp * ph + A.Cnda * da;
 
   // Kräfte im Body-System
   const L = qW * S * CLw + qH * S * A.CLde * de;
@@ -350,7 +357,8 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   }
   const Fb = o.F || (o.F = [0, 0, 0]);
   Fb[0] = -Dg * ex + L * lx + T;
-  Fb[1] = -Dg * ey + Y;
+  const Ty = T * Math.sin(P.rightThrust); // Schubachse leicht nach rechts geneigt
+  Fb[1] = -Dg * ey + Y + Ty;
   Fb[2] = -Dg * ez + L * lz;
 
   // Momente
@@ -358,7 +366,11 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const aP = clamp(alpha, -0.35, 0.35);
   Mb[0] = S * b * (qbar * ClB + qW * ClW) + qV * S * b * A.Cldr * dr - P.torqueRoll * Qp;
   Mb[1] = qW * S * c * Cm + qH * S * c * A.Cmde * de + P.thrustZ * T;
-  Mb[2] = S * b * (qbar * CnB + qW * CnW) + qV * S * b * A.Cndr * dr - P.pFactor * Tpos * aP - P.swirl * Math.max(0, Qp);
+  // Gieren: Seitenruder und feste Trimmkante (CnRig) sitzen im Propellerstrahl (Staudruck qV); Propeller: P-Faktor,
+  // Drall am Seitenleitwerk (wirkt vor allem bei hoher Leistung und kleiner Fahrt) und die nach rechts geneigte
+  // Schubachse, die den leistungsabhängigen Drall im Reise-/Anflugbereich ausgleicht
+  Mb[2] = S * b * (qbar * CnB + qW * CnW) + qV * S * b * (A.Cndr * dr + A.CnRig)
+    - P.pFactor * Tpos * aP - P.swirl * kSlip * Math.max(0, Qp) + P.center[0] * Ty;
 
   // Diagnose für Zustand/Stall-Logik
   o.V = V;
@@ -549,26 +561,112 @@ function surfaceHeight(ac, x, z) {
 // ---------------------------------------------------------------- Integration
 const EMPTY3 = [0, 0, 0];
 
+// Numerische Steuerbefehle mit Neutralwert: nicht-endliche Eingaben (z. B. undefined über SIM.setControls) würden
+// sonst die integrierten Zustände (Stellglieder, Saugrohrdruck, Klappen) dauerhaft vergiften.
+const CTL_NUM = [['elevator', 0], ['aileron', 0], ['rudder', 0], ['throttle', 0], ['trim', 0], ['flapsCmd', 0], ['brakeL', 0], ['brakeR', 0]];
+/** Steuerbefehle für die Physik übernehmen (in eff), nicht-endliche Zahlen durch den Neutralwert ersetzen. */
+function sanitizeControls(ctl, eff) {
+  Object.assign(eff, ctl);
+  for (const [k, def] of CTL_NUM) if (!Number.isFinite(eff[k])) eff[k] = def;
+  return eff;
+}
+
+// Watchdog: integrierter Kernzustand (Kopie vor jedem Schritt) und die Werte, die direkt ins Rendering gehen
+function coreFinite(s) {
+  const sum = s.p[0] + s.p[1] + s.p[2] + s.v[0] + s.v[1] + s.v[2] + s.q[0] + s.q[1] + s.q[2] + s.q[3]
+    + s.w[0] + s.w[1] + s.w[2] + s.rpm + s.thrEff + s.flapsDeg + s.act[0] + s.act[1] + s.act[2]
+    + s.stallL + s.stallR + s.ias_kt + s.pitch_deg + s.bank_deg + s.heading_deg + s.g + s.ay_g + s.agl
+    // Animation/Rendering (Propeller, Räder, Bugrad, Federweg)
+    + s.propAngle + s.noseSteerDeg + s.wheelSpin[0] + s.wheelSpin[1] + s.wheelSpin[2]
+    + s.gearCompression[0] + s.gearCompression[1] + s.gearCompression[2] + s.time
+    + s.catchRevs + s.stallTgtL + s.stallTgtR; // Motorstart-Zähler, Abriss-Hysterese
+  return Number.isFinite(sum);
+}
+function saveCore(s, b) {
+  for (let k = 0; k < 3; k++) {
+    b.p[k] = s.p[k];
+    b.v[k] = s.v[k];
+    b.w[k] = s.w[k];
+    b.act[k] = s.act[k];
+  }
+  for (let k = 0; k < 4; k++) b.q[k] = s.q[k];
+  b.rpm = s.rpm;
+  b.thrEff = s.thrEff;
+  b.flapsDeg = s.flapsDeg;
+}
+const finOr = (v, d) => (Number.isFinite(v) ? v : d);
+/**
+ * Nicht-endlicher Zustand: je Wert den aktuellen, sonst den letzten gültigen (Kopie vor dem Schritt), sonst einen
+ * neutralen Wert übernehmen, Bewegung einfrieren und als Crash 'numerical' melden (einmal geloggt). Anzeige und
+ * Rendering bleiben endlich.
+ */
+function numericalFailure(ac, eff) {
+  const s = ac.state;
+  const b = ac._bak;
+  const pick = (cur, bak, d) => finOr(cur, finOr(bak, d));
+  s.p[0] = pick(s.p[0], b.p[0], 0);
+  s.p[2] = pick(s.p[2], b.p[2], 0);
+  s.p[1] = pick(s.p[1], b.p[1], finOr(surfaceHeight(ac, s.p[0], s.p[2]), 0) + ac.cfg.cgRestHeight);
+  for (let k = 0; k < 3; k++) s.act[k] = clamp(pick(s.act[k], b.act[k], 0), -1, 1);
+  s.v.fill(0);
+  s.w.fill(0);
+  const qOk = (q) => {
+    const n = Math.hypot(...q); // endliche Komponenten können trotzdem überlaufen (1e308 → ∞) → nicht normierbar
+    return q.every(Number.isFinite) && Number.isFinite(n) && n > 0.5;
+  };
+  const q = qOk(s.q) ? s.q : qOk(b.q) ? b.q : [1, 0, 0, 0];
+  for (let k = 0; k < 4; k++) s.q[k] = q[k];
+  qNormalize(s.q);
+  s.rpm = clamp(pick(s.rpm, b.rpm, 0), 0, ac.cfg.engine.rpmMax);
+  s.thrEff = clamp(pick(s.thrEff, b.thrEff, 0), 0, 1);
+  s.flapsDeg = clamp(pick(s.flapsDeg, b.flapsDeg, 0), 0, 30);
+  s.stallL = s.stallR = s.stallTgtL = s.stallTgtR = 0;
+  s.g = 1;
+  s.ay_g = 0;
+  // übrige Zahlenfelder (Radzustände, Animation, Anzeigewerte) neutral, abgeleitete Werte neu berechnen
+  for (const k of Object.keys(s)) {
+    const v = s[k];
+    if (typeof v === 'number') s[k] = finOr(v, 0);
+    else if (Array.isArray(v)) for (let i = 0; i < v.length; i++) if (typeof v[i] === 'number') v[i] = finOr(v[i], 0);
+  }
+  for (const w of ac.wheels) w.lon = w.lat = 0;
+  const atm = ac.atm;
+  atm.gust[0] = atm.gust[1] = atm.gust[2] = atm.gustP = 0;
+  for (const k of ['windDir', 'windKt', 'turbulence', 'extraTurbulence']) atm[k] = finOr(atm[k], 0);
+  atm.qnh = finOr(atm.qnh, 1013.25);
+  s.crashed = true;
+  s.crashReason = 'numerical';
+  s.engineRunning = false;
+  refreshOutputs(ac, eff);
+  if (typeof console !== 'undefined') console.warn('[C172] Physik-Watchdog: nicht-endlicher Zustand – Crash "numerical"');
+}
+
 /** Einen Physikschritt dt (s) rechnen. */
 export function stepAircraft(ac, ctl, dt) {
   const s = ac.state;
   if (s.crashed) return s;
   const cfg = ac.cfg;
   const E = cfg.engine;
+  const eff = sanitizeControls(ctl, ac._eff);
+  // von außen vergifteter Zustand (z. B. SIM.state): erkennen, bevor Gelände/Böen damit abgefragt werden
+  if (!coreFinite(s)) {
+    numericalFailure(ac, eff);
+    return s;
+  }
+  saveCore(s, ac._bak);
 
   // Stellglieder: Klappenmotor, Saugrohrdruck
   const fl = cfg.flaps;
-  const fTarget = fl.detents[clamp(Math.round(ctl.flapsCmd), 0, fl.detents.length - 1)];
+  const fTarget = fl.detents[clamp(Math.round(eff.flapsCmd), 0, fl.detents.length - 1)];
   const fStep = fl.rate * dt;
   s.flapsDeg += clamp(fTarget - s.flapsDeg, -fStep, fStep);
-  s.thrEff += (clamp(ctl.throttle, 0, 1) - s.thrEff) * Math.min(1, dt / E.throttleTau);
+  s.thrEff += (clamp(eff.throttle, 0, 1) - s.thrEff) * Math.min(1, dt / E.throttleTau);
 
   // Ruderflächen folgen der Eingabe mit begrenzter Stellrate (≈ 90°/s); Aerodynamik, Bugradlenkung und
   // Animation sehen die tatsächliche Stellung
   const C = cfg.controls;
-  const eff = Object.assign(ac._eff, ctl);
   const lim = [C.surfaceRate / Math.max(C.elevUp, C.elevDown), C.surfaceRate / C.aileron, C.surfaceRate / C.rudder];
-  const dem = [ctl.elevator, ctl.aileron, ctl.rudder];
+  const dem = [eff.elevator, eff.aileron, eff.rudder];
   for (let k = 0; k < 3; k++) {
     const d = clamp(dem[k], -1, 1) - s.act[k];
     s.act[k] += clamp(d, -lim[k] * dt, lim[k] * dt);
@@ -626,7 +724,7 @@ export function stepAircraft(ac, ctl, dt) {
 
   // Motor/Propeller-Drehzahl: I·dω/dt = Q_Motor − Q_Prop − Q_Reibung
   if (!s.propBroken) {
-    const Qe = engineTorque(ac, ctl, air.sigma);
+    const Qe = engineTorque(ac, eff, air.sigma);
     const net = Qe - o.Qp;
     const fric = E.fricA + E.fricB * s.rpm;
     if (s.rpm <= 0.5 && net <= E.fricA) {
@@ -637,8 +735,8 @@ export function stepAircraft(ac, ctl, dt) {
     }
     // Zündung / Motorlauf
     if (s.engineRunning) {
-      if (ctl.ignition === 'OFF' || s.rpm < E.dieRpm) s.engineRunning = false;
-    } else if (ctl.ignition !== 'OFF' && s.rpm > E.fireRpm) {
+      if (eff.ignition === 'OFF' || s.rpm < E.dieRpm) s.engineRunning = false;
+    } else if (eff.ignition !== 'OFF' && s.rpm > E.fireRpm) {
       s.catchRevs += (s.rpm / 60) * dt;
       if (s.catchRevs >= E.catchRevs) s.engineRunning = true;
     } else {
@@ -671,7 +769,8 @@ export function stepAircraft(ac, ctl, dt) {
     s.engineRunning = false; // Zustand bleibt im Aufprallmoment eingefroren
   }
 
-  updateOutputs(ac, ctl, o, air, agl, nz, ny);
+  updateOutputs(ac, eff, o, air, agl, nz, ny);
+  if (!coreFinite(s)) numericalFailure(ac, eff);
   return s;
 }
 
@@ -760,7 +859,8 @@ export function resetState(ac) {
 }
 
 /** Abgeleitete Werte ohne Zeitschritt aktualisieren (z. B. nach einem Reset). */
-export function refreshOutputs(ac, ctl) {
+export function refreshOutputs(ac, ctlIn) {
+  const ctl = sanitizeControls(ctlIn, {});
   ac.state.act = [clamp(ctl.elevator, -1, 1), clamp(ctl.aileron, -1, 1), clamp(ctl.rudder, -1, 1)]; // Stellglieder = Eingabe
   const s = ac.state;
   const air = isa(s.p[1], ac.atm.qnh);
@@ -768,5 +868,6 @@ export function refreshOutputs(ac, ctl) {
   windAt(ac.atm, cgHeight - ac.cfg.cgRestHeight, ac._wind);
   const o = aeroProp(ac, ctl, air, ac._wind, EMPTY3, 0, cgHeight + ac.cfg.wingHeight, ac._o);
   updateOutputs(ac, ctl, o, air, cgHeight - ac.cfg.cgRestHeight, s.g, s.ay_g);
+  saveCore(s, ac._bak); // gilt als letzter gültiger Zustand für den Watchdog
   return s;
 }

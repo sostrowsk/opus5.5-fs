@@ -685,8 +685,22 @@ installDebug({
     renderFrame();
   },
   setControls(obj) {
-    Object.assign(controls, obj);
-    input.suspend();
+    // nur bekannte Felder mit gültigem Typ übernehmen (z. B. undefined/NaN aus einem Testskript ignorieren)
+    let applied = 0;
+    for (const [k, v] of Object.entries(obj)) {
+      if (!(k in controls)) continue;
+      let val;
+      if (typeof controls[k] === 'number') val = v === null || v === '' ? NaN : Number(v);
+      else if (typeof controls[k] === 'boolean') val = !!v;
+      else if (k === 'ignition') val = ['OFF', 'BOTH', 'START'].includes(v) ? v : undefined;
+      if (val === undefined || (typeof val === 'number' && !Number.isFinite(val))) {
+        console.warn(`[SIM] setControls: ungültiger Wert für ${k} ignoriert`);
+        continue;
+      }
+      controls[k] = val;
+      applied++;
+    }
+    if (applied) input.suspend(); // nur echte Übersteuerung hält die Eingabe an
   },
   setEnv(obj) {
     for (const [k, v] of Object.entries(obj)) if (ENV_KEYS.includes(k)) env[k] = sanitize(k, v);

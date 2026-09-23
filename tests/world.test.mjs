@@ -75,7 +75,7 @@ test('AK-22 Wolken: 0 % → keine Wolke; 80 % → ≥ 30 Wolken im Umkreis von 1
   assert.ok(f.cloudsNear(0, 0, 10000).length < a);
 });
 
-test('AK-22 In der Wolke: Dichte > 0,5 im Kern → Sichtweite < 200 m; außerhalb volle Sicht', () => {
+test('AK-22 In der Wolke: Dichte > 0,5 im Kern → Sichtweite < 100 m; außerhalb volle Sicht', () => {
   const f = createCloudField();
   f.setParams(0.8, 1219);
   const cl = f.cloudsNear(3000, -2000, 10000)[0];
@@ -83,7 +83,7 @@ test('AK-22 In der Wolke: Dichte > 0,5 im Kern → Sichtweite < 200 m; außerhal
   assert.ok(core > 0.5, `Kern-Dichte ${core}`);
   const vis = fogVisibility(inCloudAmount(core));
   report(`Kern-Dichte ${core.toFixed(2)} → Sicht ${vis.toFixed(0)} m`);
-  assert.ok(vis < 200, `Sicht ${vis}`);
+  assert.ok(vis < 100, `Sicht ${vis}`);
   const below = f.densityAt(cl.x, cl.base - 200, cl.z);
   assert.equal(below, 0);
   assert.ok(fogVisibility(inCloudAmount(below)) > 20000);

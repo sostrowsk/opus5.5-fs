@@ -92,6 +92,8 @@ const cacheH = new Float64Array(CACHE_SIZE);
 
 /** Höhe des Rastervertex (i, j) bei x = i·GRID, z = j·GRID. */
 export function vertexHeight(i, j) {
+  // nur ganzzahlige Int32-Indizes cachen – NaN/Infinity würden als 0 abgelegt und den Cache vergiften
+  if ((i | 0) !== i || (j | 0) !== j) return terrainHeight(i * GRID, j * GRID);
   const k = ((i * 73856093) ^ (j * 19349663)) & (CACHE_SIZE - 1);
   if (cacheI[k] === i && cacheJ[k] === j) return cacheH[k];
   const h = terrainHeight(i * GRID, j * GRID);

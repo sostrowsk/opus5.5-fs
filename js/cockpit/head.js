@@ -9,12 +9,13 @@ import { DEG, G0, clamp, threeToBody } from '../sim/math.js';
 export const HEAD = {
   freq: 2.5, // Hz Eigenfrequenz
   zeta: 0.7, // Dämpfungsgrad
-  gain: 0.25, // Anteil der Beschleunigungsabweichung, der den Kopf auslenkt (Nacken hält dagegen)
+  gain: 0.45, // Anteil der Beschleunigungsabweichung, der den Kopf auslenkt (Nacken hält dagegen)
   maxOffset: 0.02, // m
   maxRot: 1 * DEG, // rad
   rotPerM: (0.8 * DEG) / 0.02, // Nicken/Neigen pro Meter Versatz
+  pitchPerZ: 0.85, // Anteil des Vertikalversatzes am Nicken (Lastvielfaches drückt den Kopf nach vorn-unten)
   vibAmp: 0.0006, // m bei Volllast am Boden (< 1 mm)
-  maxExcite: 4 * G0, // Anregung begrenzen (Aufsetzstoß)
+  maxExcite: 3 * G0, // Anregung begrenzen (Aufsetzstoß)
 };
 
 export function createHead() {
@@ -70,6 +71,9 @@ export function stepHead(h, s, strength, dt) {
     h.o[i] += h.ov[i] * dt;
   }
   let x = h.o[0] * strength, y = h.o[1] * strength, z = h.o[2] * strength;
+  // Drehung nur aus dem Feder-Masse-Versatz (nicht aus der Motorvibration): Kopf nach vorn oder nach unten
+  // gedrückt → Blick nach unten, seitlich versetzt → Neigung zur Seite des Versatzes
+  const pitchIn = -(x + HEAD.pitchPerZ * z) * HEAD.rotPerM, rollIn = y * HEAD.rotPerM;
   // Motorvibration am Boden (deterministisch aus der Simulationszeit, drehzahlabhängig, < 1 mm)
   if (s.onGround && s.engineRunning && s.rpm > 300) {
     const r = clamp(s.rpm / 2700, 0, 1.2);
@@ -89,8 +93,7 @@ export function stepHead(h, s, strength, dt) {
   out.x = x;
   out.y = y;
   out.z = z;
-  // Kopf nickt mit dem Längsversatz (nach vorn → Blick nach unten) und neigt sich zur Seite des Versatzes
-  out.pitch = soft(-x * HEAD.rotPerM, HEAD.maxRot);
-  out.roll = soft(y * HEAD.rotPerM, HEAD.maxRot);
+  out.pitch = soft(pitchIn, HEAD.maxRot);
+  out.roll = soft(rollIn, HEAD.maxRot);
   return out;
 }

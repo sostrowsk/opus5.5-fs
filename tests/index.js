@@ -11,3 +11,4 @@ require('./loop.test.mjs');
 require('./head.test.mjs');
 require('./pattern.test.mjs');
 require('./ui.test.mjs');
+require('./fuzz.test.mjs');

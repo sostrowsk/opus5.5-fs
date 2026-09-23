@@ -388,6 +388,7 @@ function propDiscMaterial() {
       uGhost: { value: 0 },
       uSun: { value: new THREE.Vector3(0, 1, 0) },
       uGlint: { value: 0 },
+      uLit: { value: 1 }, // Beleuchtung der Blattspitzen 0 (Nacht) … 1 (Tag)
     },
     vertexShader: /* glsl */ `
       varying vec2 vP;
@@ -400,6 +401,7 @@ function propDiscMaterial() {
       uniform float uGhost;
       uniform vec3 uSun;
       uniform float uGlint;
+      uniform float uLit;
       varying vec2 vP;
       void main() {
         float r = length(vP);
@@ -407,17 +409,18 @@ function propDiscMaterial() {
         float a = atan(vP.y, vP.x);
         // Blattdichte: 2 Blätter decken innen mehr vom Umfang ab
         float cover = clamp(0.28 / (6.2832 * r), 0.0, 0.5);
-        float alpha = uOpacity * (0.25 + 2.2 * cover);
-        vec3 col = vec3(0.035);
-        // Spitzen-Streifen erscheinen als Ringe
-        float tip = smoothstep(0.862, 0.87, r);
-        float white = smoothstep(0.893, 0.9, r) * (1.0 - smoothstep(0.915, 0.922, r));
-        col = mix(col, vec3(0.22, 0.04, 0.03), tip);
-        col = mix(col, vec3(0.3), white);
-        alpha += tip * 0.02 * uOpacity;
+        // zu den Spitzen hin durchsichtiger (schnellste Blattteile), kein harter Scheibenrand
+        float alpha = uOpacity * (0.25 + 2.2 * cover) * mix(1.0, 0.4, smoothstep(0.8, 0.955, r));
+        vec3 col = vec3(0.035) * uLit; // nachts schwarz: die Scheibe darf den Nachthimmel nicht aufhellen
         // Geisterblätter (stroboskopischer Eindruck)
         float g = pow(abs(cos(a - uGhost)), 60.0);
         alpha += g * 0.10 * uOpacity * smoothstep(0.15, 0.4, r);
+        // Spitzen-Streifen: nur ein schwacher, beleuchtungsabhängiger Schimmer (nachts praktisch unsichtbar),
+        // weiche Kanten und stärker nur dort, wo gerade ein „Geisterblatt“ steht → flirrt statt harter Ringe
+        float tip = smoothstep(0.85, 0.875, r) * (1.0 - smoothstep(0.935, 0.955, r));
+        float white = smoothstep(0.88, 0.9, r) * (1.0 - smoothstep(0.915, 0.935, r));
+        float shimmer = 0.35 + 0.65 * pow(abs(cos(a - uGhost)), 6.0);
+        col = mix(col, mix(vec3(0.2, 0.05, 0.04), vec3(0.26), white), tip * 0.35 * uLit * shimmer);
         // Sonnenstreifen: radialer Glanz Richtung Sonne
         float sa = atan(uSun.y, uSun.x);
         float d = abs(atan(sin(a - sa), cos(a - sa)));
@@ -788,6 +791,9 @@ export function createAircraftModel() {
         u.uSun.value.set(sunLocal.x, sunLocal.y, 0);
         u.uGlint.value = clamp(Math.hypot(sunLocal.x, sunLocal.y) * 1.2, 0, 1) * clamp(opts.sunUp ?? 1, 0, 1) * 0.3;
       }
+      // Spitzen nachts nur noch vom Landelicht schwach angeleuchtet
+      const dk = clamp(opts.darkness ?? 0, 0, 1);
+      u.uLit.value = Math.max(1 - dk, opts.lights?.landing ? 0.3 * dk : 0);
     }
 
     // Räder: Einfederung (entlang Body-z) und Rotation; Bugrad-Lenkung am Boden

@@ -98,7 +98,7 @@ export function skyRadiance(vx, vy, vz, s, out = [0, 0, 0]) {
 
 // ------------------------------------------------------------------ Sicht (Dunst-Rand bzw. in der Wolke)
 export const CLEAR_VISIBILITY = 22000; // m – Randabblendung des Geländes (Fern-Mesh reicht ±24 km)
-export const CLOUD_VISIBILITY = 140; // m – im Wolkenkern
+export const CLOUD_VISIBILITY = 80; // m – im Wolkenkern (SPEC §3.3: < 100 m)
 /** Anteil „in der Wolke“ (0..1) aus der Wolkendichte an der Kamera. */
 export function inCloudAmount(density) {
   return smooth(0.2, 0.5, density);

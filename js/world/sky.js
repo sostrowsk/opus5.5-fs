@@ -385,7 +385,7 @@ export function createSky(scene) {
     state.horizonAway.copy(HAZE.uHazeAway.value);
     // Bodensicht ≈ 50 km (klar) … 30 km (bedeckt, tiefe Sonne); die Randabblendung verdeckt das Geländeende
     HAZE.uHazeDensity.value = 0.75e-4 * (1 + 0.5 * cov) * (1 + 0.3 * clamp(1 - L.elevation / 12, 0, 1));
-    // In der Wolke: Sicht < 200 m (AK-22), Farbe der beleuchteten Wolke
+    // In der Wolke: Sicht < 100 m (AK-22), Farbe der beleuchteten Wolke
     const vis = fogVisibility(inCloud);
     HAZE.uHazeFar.value = vis;
     HAZE.uHazeNear.value = lerp(CLEAR_VISIBILITY * 0.64, 0, Math.min(1, inCloud * 4));

@@ -306,6 +306,7 @@ attribute float aPapi; // PAPI-Schaltwinkel (°)
 uniform float uNight, uScale;
 varying vec3 vCol;
 varying float vA;
+varying float vSize;
 void main() {
   vec3 toCam = cameraPosition - position;
   float d = length(toCam);
@@ -326,17 +327,23 @@ void main() {
   // Lampen durchdringen Dunst besser als Gelände (0,85), jenseits der Sichtweite (Wolke, Rand) sind sie aus
   vA = on * vis * (1.0 - h.a * 0.85) * (1.0 - smoothstep(uHazeNear, uHazeFar, d));
   vCol = col;
-  gl_PointSize = clamp(1400.0 / d, 2.2, 16.0) * uScale * (aDir.w > 1.5 ? 1.3 : 1.0);
+  // Punktgröße (CSS-px) begrenzt: nahe Lampen bleiben kleine helle Punkte mit Glow statt großer Scheiben
+  gl_PointSize = clamp(1000.0 / d, 2.2, 7.0) * uScale * (aDir.w > 1.5 ? 1.3 : 1.0);
+  vSize = gl_PointSize;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   if (vA < 0.003) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // aus: verwerfen
 }`;
 const LIGHT_FRAG = /* glsl */ `
+uniform float uScale;
 varying vec3 vCol;
 varying float vA;
+varying float vSize;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float r2 = dot(c, c) * 4.0;
-  float a = (exp(-r2 * 7.0) + 0.25 * exp(-r2 * 2.0)) * (1.0 - smoothstep(0.6, 1.0, r2)) * vA;
+  // Kern mit fester Pixelbreite (≈ 0,7 CSS-px Radius, die HDR-Farbe sättigt nur dort), darum ein weicher Glow
+  float rp = length(c) * vSize / (0.7 * uScale);
+  float a = (exp(-rp * rp) + 0.2 * exp(-r2 * 4.0)) * (1.0 - smoothstep(0.6, 1.0, r2)) * vA;
   if (a < 0.004) discard;
   gl_FragColor = vec4(vCol * a, 1.0);
   #include <tonemapping_fragment>
