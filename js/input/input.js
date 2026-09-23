@@ -294,15 +294,16 @@ export function createInput(opts) {
     setStick(source, e, a) {
       if (blocked) return;
       activate();
-      ext[source].e = e;
-      ext[source].a = a;
+      // nicht-endliche Werte (entartete Element-Rechtecke) nie an die Physik durchreichen
+      ext[source].e = Number.isFinite(e) ? clamp(e, -1, 1) : 0;
+      ext[source].a = Number.isFinite(a) ? clamp(a, -1, 1) : 0;
       src.pr = source;
     },
     /** Analoges Seitenruder vom Touch-Slider (−1..1). */
     setRudder(v) {
       if (blocked) return;
       activate();
-      ext.touchRud = v;
+      ext.touchRud = Number.isFinite(v) ? clamp(v, -1, 1) : 0;
       src.rud = 'touch';
     },
     /** Nach dem Loslassen der Maus-Quelle wieder die Tastatur-Rampe aktiv (Wert läuft von der Lage aus auf 0). */

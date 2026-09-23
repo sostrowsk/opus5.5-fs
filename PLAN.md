@@ -170,6 +170,7 @@ Die Reihenfolge folgt dem Prinzip „erst das Cockpit-Erlebnis als vertikaler Du
 
 1. **AP1 Gerüst:**
    - Verzeichnisse anlegen, three 0.186.0 vendoren: `npm pack three@0.186.0`, daraus nur `build/three.module.min.js`, `build/three.core.min.js` und LICENSE **ins selbe Verzeichnis** `vendor/three/`. Die Importmap zeigt nur auf `three.module.min.js`, das `./three.core.min.js` relativ lädt.
+     - *Abweichung (bei der Umsetzung festgestellt):* Das npm-Paket `three@0.186.0` enthält keine `*.min.js`-Builds mehr, nur `build/three.module.js` und `build/three.core.js`. Vendored sind daher diese beiden Dateien byte-identisch aus dem Tarball; die Importmap zeigt auf `three.module.js`, das `./three.core.js` relativ lädt (gzip ≈ 420 KB, N6 bleibt eingehalten).
    - `index.html`, `main.js`-Loop, `launch.json`, README-Skelett.
    - **Gate:** Im Browser lädt `import * as THREE from "three"` ohne 404 und ohne Konsolenfehler.
 2. **AP2 Sim-Kern:** `math.js` (inkl. Achsentests), `c172.js`, `atmosphere.js`, `aircraft.js`, `scenarios.js` sowie `heightfield.js` und `noise.js` (werden für `groundHeight` gebraucht). Parallel entsteht `tests/physics.test.mjs` mit AK-01..18. Es wird so lange getunt, bis alle Tests grün sind.

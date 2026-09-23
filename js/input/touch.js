@@ -37,6 +37,7 @@ export function createTouch(ctx) {
   function stickFrom(e) {
     const r = stick.getBoundingClientRect();
     const R = r.width / 2;
+    if (!(R > 0)) return; // ausgeblendet (z. B. beim Drehen ins Hochformat): keine Division durch 0
     let x = (e.clientX - (r.left + R)) / R, y = (e.clientY - (r.top + R)) / R;
     const l = Math.hypot(x, y);
     if (l > 1) (x /= l), (y /= l);
@@ -97,6 +98,7 @@ export function createTouch(ctx) {
   let rudId = null;
   function rudFrom(e) {
     const r = rud.getBoundingClientRect();
+    if (!(r.width > 44)) return; // ausgeblendet/entartet: kein Scheinausschlag
     const v = clamp((e.clientX - (r.left + r.width / 2)) / (r.width / 2 - 22), -1, 1);
     rudKnob.style.transform = `translateX(${(v * (r.width / 2 - 24)).toFixed(1)}px)`;
     input.setRudder(v);

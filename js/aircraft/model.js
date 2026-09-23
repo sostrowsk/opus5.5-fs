@@ -798,10 +798,10 @@ export function createAircraftModel() {
       w.wheel.position.copy(w.base);
       w.wheel.position.y += s.gearCompression[i];
     }
-    // Bugrad: unteres Federbein + Rad fahren ein, Lenkung über das Seitenruder nur mit Bodenkontakt
+    // Bugrad: unteres Federbein + Rad fahren ein; Lenkwinkel exakt wie in der Physik (ratenbegrenztes
+    // Seitenruder, fahrtabhängige Bungee-Begrenzung, ohne Bodenkontakt zentriert)
     const nose = parts.wheels[0];
-    const steerDeg = s.wheelContact[0] ? clamp(ctl.rudder, -1, 1) * C172.controls.noseSteer : 0;
-    nose.steer.rotation.y = -steerDeg * D;
+    nose.steer.rotation.y = -(s.noseSteerDeg || 0) * D;
     nose.steer.position.y = NOSE_PIVOT.y + s.gearCompression[0];
 
     // Lichter

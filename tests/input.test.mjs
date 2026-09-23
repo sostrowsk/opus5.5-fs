@@ -235,3 +235,15 @@ test('Koordinationshilfe hinterlässt keinen Rest-Ausschlag (auch vor der ersten
   t.input.flaps(1);
   assert.equal(t.controls.flapsCmd, 0);
 });
+
+test('Touch/Maus: nicht-endliche Stick-/Seitenruderwerte (entartetes Element-Rechteck) werden zu 0', () => {
+  const t = setup();
+  t.input.setStick('touch', NaN, -Infinity);
+  t.run(DT);
+  assert.equal(t.controls.elevator, 0);
+  assert.equal(t.controls.aileron, 0);
+  t.input.setRudder(NaN);
+  t.run(DT);
+  assert.equal(t.controls.rudder, 0);
+  assert.ok(Number.isFinite(t.controls.elevator) && Number.isFinite(t.controls.aileron) && Number.isFinite(t.controls.rudder));
+});

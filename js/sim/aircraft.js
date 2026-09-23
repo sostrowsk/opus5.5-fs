@@ -62,6 +62,7 @@ function createState() {
     gearCompression: [0, 0, 0],
     wheelSpin: [0, 0, 0],
     wheelContact: [false, false, false],
+    noseSteerDeg: 0, // tatsächlicher Bugrad-Lenkwinkel (+ = rechts), für die Animation
     // abgeleitete Anzeigewerte
     ias_kt: 0,
     cas_kt: 0,
@@ -248,8 +249,16 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const Vxz = Math.hypot(u, ww);
   const rho = air.rho;
   const qbar = 0.5 * rho * V * V;
-  const alpha = V > 0.5 ? Math.atan2(ww, u) : 0;
+  // Flügel, Höhenleitwerk und Längsmomente sehen nur die Anströmung in der Symmetrieebene
+  // (qW = qbar·cos²β). Bei reiner Querströmung (β → 90°, z. B. Seitenwind im Stand) ist α
+  // unbestimmt – dann gibt es auch keinen Flügelauftrieb, kein Nickmoment und keinen Abriss.
+  const qW = 0.5 * rho * Vxz * Vxz;
+  const alpha = Vxz > 0.5 ? Math.atan2(ww, u) : 0;
   const beta = V > 0.5 ? Math.asin(clamp(vv / V, -1, 1)) : 0;
+  // Schiebewinkel-Terme bleiben für kleine β linear (sin β·cos β ≈ β), sind aber begrenzt
+  // (Maximum bei 45°, null bei reiner Querströmung) – kein unbegrenztes Moment bis ±90°.
+  const sb = Math.sin(beta);
+  const bEff = sb * Math.cos(beta);
   const Vn = Math.max(V, 10);
   const pw = s.w[0] - gustP;
   const ph = (pw * b) / (2 * Vn);
@@ -271,7 +280,7 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const Qp = o.Q;
   const Tpos = Math.max(0, T);
   const qSlip = Tpos / P.diskArea;
-  const qH = qbar + P.slipH * qSlip; // Staudruck am Höhenleitwerk
+  const qH = qW + P.slipH * qSlip; // Staudruck am Höhenleitwerk
   const qV = qbar + P.slipV * qSlip; // … am Seitenleitwerk
 
   // Klappen & Bodeneffekt
@@ -287,8 +296,8 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const aCrit = lerp(A.alphaCrit0, A.alphaCrit30, clamp(fd / 30, 0, 1));
   const aNeg = A.alphaCritNeg;
   const dAr = (pw * b) / (4 * Vn);
-  const aL = alpha - dAr - A.dropBeta * beta + A.dropAsym;
-  const aR = alpha + dAr + A.dropBeta * beta;
+  const aL = alpha - dAr - A.dropBeta * bEff + A.dropAsym;
+  const aR = alpha + dAr + A.dropBeta * bEff;
   const CLlinRaw = (a) => A.CL0 + A.CLa * a + dCLf;
   const CLlin = (a) => CLlinRaw(clamp(a, aNeg - 6 * DEG, aCrit + 6 * DEG));
   const CLmaxP = CLlinRaw(aCrit) * A.postStallCL;
@@ -311,19 +320,23 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   const AR = (b * b) / S;
   const k = 1 / (Math.PI * A.e * AR);
   const sa = Math.sin(alpha);
-  const CD = A.CD0 + dCDf + k * kCDi * CLw * CLw + stallAvg * A.stallDrag * sa * sa + A.CDbeta * Math.abs(beta);
-  const CY = A.CYb * beta + A.CYp * ph + A.CYr * rh;
+  const CDp = A.CD0 + dCDf + A.CDbeta * Math.abs(sb); // Formwiderstand (Gesamtanströmung)
+  const CDw = k * kCDi * CLw * CLw + stallAvg * A.stallDrag * sa * sa; // Flügel (Symmetrieebene)
+  const CY = A.CYb * sb + A.CYp * ph + A.CYr * rh;
 
   // Momentenbeiwerte (Staudruck qbar); Leitwerksruder mit Slipstream-Staudruck
   const Cm = A.Cm0 + A.Cma * sa + A.Cmq * qh + dCmf + A.stallCm * stallAvg;
   const Clr = clamp(A.ClrPerCL * CLw, -0.1, 0.5);
-  const Cl = A.Clb * beta + A.Clp * ph + Clr * rh + A.Clda * da + dClStall + A.ClRig;
+  // Rollen/Gieren: Schiebe- und Dämpfungsterme mit qbar, Flügelterme (Querruder, Abriss, Rigging) mit qW
+  const ClB = A.Clb * bEff + A.Clp * ph;
+  const ClW = Clr * rh + A.Clda * da + dClStall + A.ClRig;
   const Cnp = -CLw / 10;
-  const Cn = A.Cnb * Math.sin(beta) + Cnp * ph + A.Cnr * rh + A.Cnda * da + A.CnRig;
+  const CnB = A.Cnb * sb + A.Cnr * rh;
+  const CnW = Cnp * ph + A.Cnda * da + A.CnRig;
 
   // Kräfte im Body-System
-  const L = qbar * S * CLw + qH * S * A.CLde * de;
-  const Dg = qbar * S * CD;
+  const L = qW * S * CLw + qH * S * A.CLde * de;
+  const Dg = qbar * S * CDp + qW * S * CDw;
   const Y = qbar * S * CY + qV * S * A.CYdr * dr;
   let lx = 0, lz = -1, ex = 0, ey = 0, ez = 0;
   if (V > 0.5) {
@@ -343,12 +356,13 @@ function aeroProp(ac, ctl, air, wind, gust, gustP, hWing, o) {
   // Momente
   const Mb = o.M || (o.M = [0, 0, 0]);
   const aP = clamp(alpha, -0.35, 0.35);
-  Mb[0] = qbar * S * b * Cl + qV * S * b * A.Cldr * dr - P.torqueRoll * Qp;
-  Mb[1] = qbar * S * c * Cm + qH * S * c * A.Cmde * de + P.thrustZ * T;
-  Mb[2] = qbar * S * b * Cn + qV * S * b * A.Cndr * dr - P.pFactor * Tpos * aP - P.swirl * Math.max(0, Qp);
+  Mb[0] = S * b * (qbar * ClB + qW * ClW) + qV * S * b * A.Cldr * dr - P.torqueRoll * Qp;
+  Mb[1] = qW * S * c * Cm + qH * S * c * A.Cmde * de + P.thrustZ * T;
+  Mb[2] = S * b * (qbar * CnB + qW * CnW) + qV * S * b * A.Cndr * dr - P.pFactor * Tpos * aP - P.swirl * Math.max(0, Qp);
 
   // Diagnose für Zustand/Stall-Logik
   o.V = V;
+  o.Vxz = Vxz;
   o.u = u;
   o.qbar = qbar;
   o.alpha = alpha;
@@ -398,6 +412,7 @@ function groundContact(ac, ctl, dt, Fw, Mb) {
     if (d <= 0) {
       s.gearCompression[i] = 0;
       s.wheelContact[i] = false;
+      if (g.steer) s.noseSteerDeg = 0; // ausgefedert: Zentriernocken stellt das Bugrad gerade
       wst.lon = 0;
       wst.lat = 0;
       continue;
@@ -428,6 +443,7 @@ function groundContact(ac, ctl, dt, Fw, Mb) {
       const v2 = s.v[0] * s.v[0] + s.v[2] * s.v[2];
       const lim = Math.min(cfg.controls.noseSteer * DEG, Math.atan((cfg.controls.steerMaxG * G0 * (g.pos[0] - cfg.gear[1].pos[0])) / Math.max(v2, 1e-6)));
       steer = clamp(ctl.rudder, -1, 1) * lim;
+      s.noseSteerDeg = steer * RAD;
     }
     const fb = bodyToThree(s.q, [Math.cos(steer), Math.sin(steer), 0]);
     const fn = fb[0] * n[0] + fb[1] * n[1] + fb[2] * n[2];
@@ -578,6 +594,7 @@ export function stepAircraft(ac, ctl, dt) {
     s.onGround = false;
     s.wheelContact.fill(false);
     s.gearCompression.fill(0);
+    s.noseSteerDeg = 0;
     for (const w of ac.wheels) w.lon = w.lat = 0;
   }
 
@@ -637,7 +654,7 @@ export function stepAircraft(ac, ctl, dt) {
     if (a < o.aCrit - A.stallHyst && a > o.aNeg + A.stallHyst) return 0;
     return prev;
   };
-  const live = o.V > 8;
+  const live = o.Vxz > 8; // Abriss nur bei nennenswerter Anströmung in der Symmetrieebene
   s.stallTgtL = live ? tgt(o.aL, s.stallTgtL) : 0;
   s.stallTgtR = live ? tgt(o.aR, s.stallTgtR) : 0;
   const ks = Math.min(1, dt / A.stallTau);
@@ -690,7 +707,10 @@ function updateOutputs(ac, ctl, o, air, agl, nz, ny) {
   s.ay_g = ny;
   s.staticPressure = air.p;
   s.pressureAlt_ft = pressureAltitude(air.p) / FT;
-  const live = V > 10;
+  // Anzeige/Horn nur bei nennenswerter Anströmung in der Symmetrieebene und von vorn (u > 0): Die Warnfahne
+  // an der Flügelvorderkante spricht bei Rücken- oder reinem Seitenwind im Stand nicht an, ein ausgeprägter
+  // Abriss mit großem α (kleines u, großes w, z. B. steiler Sinkflug) wird dagegen angezeigt.
+  const live = o.Vxz > 10 && o.u > 0;
   s.stalled = live && Math.max(s.stallL, s.stallR) > 0.5;
   const hornMargin = lerp(cfg.aero.stallHornMargin0, cfg.aero.stallHornMargin30, clamp(s.flapsDeg / 30, 0, 1));
   s.stallWarning = live && (s.stalled || Math.max(o.aL, o.aR) > o.aCrit - hornMargin);

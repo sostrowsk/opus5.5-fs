@@ -520,6 +520,63 @@ test('AK-16 Wind: 20 kt aus 270° → IAS im Stand ≈ 20 kt; Horizontalflug GS 
   assert.ok(Math.abs(mean(err)) <= 3 && Math.max(...err.map(Math.abs)) <= 3, `GS-Fehler ${mean(err).toFixed(2)} kt`);
 });
 
+test('Seitenwind im Stand: bis 35 kt aus jeder Richtung kein Crash, kein Stall-Horn, Parkbremse hält', () => {
+  for (const windDir of [360, 180, 350, 10, 340, 45, 90, 135, 225, 315]) {
+    for (const windKt of [20, 25, 35]) {
+      const { ac, ctl, s } = setup({ mass: 1000, atm: { windDir, windKt } });
+      applyScenario(ac, 'runway', ctl);
+      const x0 = s.p[0], z0 = s.p[2];
+      let warn = 0, maxBank = 0;
+      run(ac, ctl, 10, (st) => {
+        if (st.stallWarning || st.warnings.includes('STALL')) warn++;
+        maxBank = Math.max(maxBank, Math.abs(st.bank_deg));
+        return st.crashed;
+      });
+      const what = `${windDir}°/${windKt} kt`;
+      assert.ok(!s.crashed, `${what}: Crash '${s.crashReason}' ohne Eingabe`);
+      assert.equal(warn, 0, `${what}: Stall-Warnung im Stand`);
+      assert.ok(maxBank < 5, `${what}: Querneigung ${maxBank.toFixed(1)}°`);
+      assert.ok(Math.hypot(s.p[0] - x0, s.p[2] - z0) < 0.1, `${what}: Parkbremse hält nicht`);
+    }
+  }
+});
+
+test('Stall-Anzeige bei großem α und kleiner Vorwärtsfahrt (u < 10 m/s, steiler Sinkflug) bleibt aktiv', () => {
+  const { ac, ctl, s } = setup({ ground: flatGround(0) });
+  const tr = trimAircraft(ac, { x: 0, z: 0, alt: 1500, heading: 270, kias: 70, flapsDeg: 0, gammaDeg: 0 }, ctl);
+  assert.ok(tr.converged);
+  ctl.throttle = 0;
+  s.q = qFromEuler(270 * DEG, 0, 0); // (ψ, θ, φ)
+  s.w = [0, 0, 0];
+  s.v = [-6, -15, 0]; // Nase West, u = 6 m/s, Sinken 15 m/s → α ≈ 68°
+  let stalled = false, warn = false;
+  run(ac, ctl, 1, (st) => {
+    const u = st.tas_kt * KT * Math.cos(st.aoa_deg * DEG); // Vorwärtskomponente der Anströmung
+    if (u >= 10) return;
+    stalled ||= st.stalled;
+    warn ||= st.stallWarning && st.warnings.includes('STALL');
+  });
+  assert.ok(stalled, 'stalled muss true werden');
+  assert.ok(warn, 'Stall-Warnung muss anstehen');
+});
+
+test('Bugrad-Lenkwinkel (Animation): ratenbegrenzt, im Stand 10°, beim schnellen Rollen durch Bungee begrenzt', () => {
+  const { ac, ctl, s } = setup();
+  applyScenario(ac, 'runway', ctl);
+  ctl.rudder = 1;
+  run(ac, ctl, 1 / 60);
+  assert.ok(s.noseSteerDeg > 0 && s.noseSteerDeg < 2, `ratenbegrenzt: ${s.noseSteerDeg.toFixed(2)}°`);
+  run(ac, ctl, 0.5);
+  assert.ok(Math.abs(s.noseSteerDeg - C172.controls.noseSteer) < 1e-9, `im Stand voller Einschlag: ${s.noseSteerDeg}`);
+  ctl.rudder = 0;
+  ctl.parkingBrake = false;
+  ctl.throttle = 1;
+  run(ac, ctl, 60, (st) => st.ias_kt > 45);
+  ctl.rudder = 1;
+  run(ac, ctl, 0.3);
+  assert.ok(s.gs_kt > 40 && s.noseSteerDeg > 0 && s.noseSteerDeg < 1.5, `bei ${s.gs_kt.toFixed(0)} kt: ${s.noseSteerDeg.toFixed(2)}°`);
+});
+
 test('AK-17 Turbulenz: 100 % → σ(n) > 0,1 g; 0 % → σ(n) < 0,02 g (Horizontalflug, 30 s)', () => {
   const sigma = (turb) => {
     const { ac, ctl, s } = setup({ atm: { turbulence: turb } });

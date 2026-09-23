@@ -7,7 +7,7 @@ import { AIRPORT } from './heightfield.js';
 import { HAZE, HAZE_GLSL } from './sky.js';
 import { papiUnits, papiIndication } from './papi.js';
 
-const LIFT = 0.03; // m über dem (exakt ebenen) Plateau; zusätzlich polygonOffset
+const LIFT = 0.005; // m über dem (exakt ebenen) Plateau – Räder stehen sichtbar auf dem Asphalt (AK-20: ≤ 0,01 m); Z-Fighting verhindert polygonOffset
 
 /** Pistentextur: zwei Hälften à 600 m übereinander in einer 4096 × 512-Leinwand (≈ 6,8 px/m). */
 function runwayTexture() {
