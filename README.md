@@ -77,7 +77,7 @@ ein Innenraum wirkt. Nachts übernimmt das Sonnenlicht die Rolle des (Voll-)Mond
 - Himmel, Sonnen- und Himmelslicht, Dunst- und Wolkenfarben stammen aus einem Streumodell (`skymodel.js`) – dadurch
   passen Dämmerung, goldene Stunde und Nacht automatisch zusammen. Der Dunst ist höhenabhängig und richtungsabhängig
   gefärbt (heller/wärmer zur Sonne) und geht am Horizont exakt in den Himmel über; die Randabblendung (14–22 km)
-  verdeckt das Ende des Fern-Meshes. In einer Wolke sinkt die Sicht auf 140 m.
+  verdeckt das Ende des Fern-Meshes. Im Wolkenkern sinkt die Sicht auf 80 m (SPEC: < 100 m).
 - Draw Calls (Mittel, beide Pässe): ≈ 155–170 (Terrain 25 + Fern-Mesh + Seen, Himmel, Sterne, Wolken 1, Bäume 2,
   Flugplatz 7). Zwei Nahkacheln inkl. Bäume kosten ≈ 5–10 ms CPU.
 - Debug: `SIM.world` (Himmel, Sterne, Wolken, Wasser, Flugplatz mit `papiFor('27', pos)`, Vegetation),
