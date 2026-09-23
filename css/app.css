@@ -1,0 +1,847 @@
+/* C172 Web – UI (SPEC §4.7): „Luftfahrt-Instrumente“ – mattes Anthrazit, weiße Beschriftung, Akzente in
+   Instrumenten-Grün und Warn-Gelb. Keine Webfonts. Übergänge 200 ms; prefers-reduced-motion schaltet sie ab.
+   Kontrast der Texte ≥ 4,5:1 (tests/ui.test.mjs rechnet die Tokens nach). */
+:root {
+  --bg: #1b1d1f;
+  --panel: rgba(24, 26, 29, 0.9); /* Dialoghintergrund über der 3D-Szene */
+  --panel-solid: #1d1f22;
+  --panel-edge: rgba(255, 255, 255, 0.14);
+  --hud-bg: rgba(16, 18, 20, 0.85); /* Datenleiste */
+  --field: #2a2d31;
+  --text: #eef0f2;
+  --muted: #a9b1b8;
+  --green: #3ddc84;
+  --green-ink: #06200f; /* Schrift auf grünem Grund */
+  --amber: #ffcc33;
+  --amber-ink: #231a00;
+  --red: #ff5a4f;
+  --red-ink: #1e0200;
+  --focus: #ffcc33;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --fade: 200ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#view {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  display: block;
+  touch-action: none;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+  font: 600 0.82em/1.35 var(--font-mono);
+  color: var(--text);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- Laden */
+.loading {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at 50% 40%, #2a2e33, var(--bg) 70%);
+  transition: opacity var(--fade) ease;
+}
+.loading.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.load-card {
+  width: min(420px, 100%);
+  text-align: center;
+}
+.brand {
+  font: 700 34px/1.1 var(--font-ui);
+  letter-spacing: 0.04em;
+}
+.brand-sub {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.progress {
+  margin: 26px auto 10px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: var(--green);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  transition: transform var(--fade) ease;
+}
+.load-step {
+  font: 13px/1.4 var(--font-mono);
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+/* ---------------------------------------------------------------- Dialoge (native <dialog>) */
+.dlg {
+  padding: 22px 24px 20px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border: 1px solid var(--panel-edge);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  overscroll-behavior: contain;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.dlg[open] {
+  animation: dlg-in var(--fade) ease-out;
+}
+.dlg::backdrop {
+  background: rgba(8, 10, 12, 0.25);
+}
+@keyframes dlg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.dlg h1,
+.dlg h2 {
+  margin: 0 0 4px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.dlg h1 {
+  font-size: 30px;
+}
+.dlg h2 {
+  font-size: 22px;
+}
+.dlg h3 {
+  margin: 14px 0 4px;
+  font-size: 14px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.dlg p {
+  margin: 0;
+}
+.sub {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.hint {
+  margin-top: 14px !important;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.dlg-head {
+  margin-bottom: 14px;
+}
+.dlg-head.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Startmenü: kompaktes Panel links, die rotierende Außenansicht bleibt sichtbar */
+.dlg-menu {
+  width: 420px;
+  margin: auto auto auto max(16px, 6vw);
+}
+.dlg-small {
+  width: 340px;
+}
+.dlg-settings {
+  width: 640px;
+}
+.dlg-help {
+  width: 820px;
+}
+
+.scenarios {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+.scenarios legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.scn {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px 10px 38px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+.scn input {
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--green);
+}
+.scn:has(input:checked) {
+  border-color: var(--green);
+  background: rgba(61, 220, 132, 0.09);
+}
+.scn-name {
+  font-weight: 650;
+}
+.scn-desc {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.actions.col {
+  flex-direction: column;
+}
+.btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: var(--field);
+  color: var(--text);
+  font: 600 15px/1 var(--font-ui);
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.btn.primary {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--green-ink);
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn.icon {
+  min-height: 36px;
+  width: 36px;
+  padding: 0;
+  font-size: 16px;
+}
+.actions:not(.col) .btn.primary:first-child {
+  flex: 1 1 auto;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.warn-ico {
+  color: var(--amber);
+}
+.dlg-crash .warn-ico {
+  color: var(--red);
+}
+.crash-reason {
+  margin: 8px 0 4px !important;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.detail {
+  margin-top: 10px !important;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+/* Einstellungen */
+.settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 22px;
+}
+.settings fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.settings legend {
+  padding: 0;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.set-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 6px 0;
+}
+.set-row label {
+  font-size: 14px;
+}
+.set-row output,
+.set-row .val {
+  font: 600 13px/1 var(--font-mono);
+  color: var(--text);
+  text-align: right;
+  min-width: 5.5em;
+}
+.set-row input[type='range'] {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 4px 0 0;
+  accent-color: var(--green);
+  height: 24px;
+}
+.set-row select {
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: var(--field);
+  color: var(--text);
+  font: 14px var(--font-ui);
+}
+.set-row input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--green);
+}
+.set-note {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Hilfe */
+.help-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 26px;
+}
+.help-text {
+  grid-column: 1 / -1;
+}
+.help-text p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.keys {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.keys caption {
+  text-align: left;
+  font-size: 12px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: 6px;
+}
+.keys th {
+  text-align: left;
+  font-weight: 400;
+  white-space: nowrap;
+  padding: 4px 10px 4px 0;
+  vertical-align: top;
+}
+.keys td {
+  padding: 4px 0;
+  color: var(--text);
+}
+.keys tr + tr {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+@media (max-width: 700px), (max-height: 520px) {
+  .settings,
+  .help-cols {
+    grid-template-columns: 1fr;
+  }
+  .dlg {
+    padding: 16px;
+  }
+  .dlg-menu {
+    margin: auto;
+  }
+  .dlg h1 {
+    font-size: 24px;
+  }
+}
+@media (max-height: 520px) {
+  /* Handy quer: Startmenü ohne Scrollen */
+  .dlg-menu .sub,
+  .dlg-menu .hint,
+  .scn-desc {
+    display: none;
+  }
+  .dlg-head {
+    margin-bottom: 8px;
+  }
+  .scn {
+    padding: 8px 10px 8px 34px;
+  }
+  .scn input {
+    left: 10px;
+    top: 10px;
+  }
+  .actions {
+    margin-top: 12px;
+  }
+  .actions.col {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .actions.col .btn {
+    flex: 1 1 40%;
+  }
+}
+
+/* Qualität „Niedrig“: keine Weichzeichner */
+body.q-low .dlg,
+body.q-low .hud {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+body.q-low .dlg {
+  background: var(--panel-solid);
+}
+
+/* ---------------------------------------------------------------- Datenleiste (Taste H) – dezent, unten über dem Panel */
+.hud {
+  position: fixed;
+  left: 50%;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--hud-bg);
+  color: var(--text);
+  font: 13px/1.4 var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity var(--fade) ease;
+  z-index: 8;
+}
+.hud.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+.hud b {
+  font-weight: 400;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.hud .warn {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--amber);
+  color: var(--amber-ink);
+  font-weight: 700;
+}
+.hud .warn.crit {
+  background: var(--red);
+  color: var(--red-ink);
+}
+.hud .state {
+  color: var(--amber);
+}
+body.touch-on .hud {
+  bottom: auto;
+  top: calc(66px + env(safe-area-inset-top));
+}
+
+/* Bedienhilfen nur im Flug (Menüs liegen darüber; Touch-Elemente wären ohnehin inert) */
+body:not([data-app='running']):not([data-app='paused']) .hud,
+body:not([data-app='running']) .touch,
+body:not([data-app='running']) .yoke-ind,
+body:not([data-app='running']) .tip {
+  display: none !important;
+}
+/* Hochformat auf dem Handy: der Drehhinweis verdeckt alles – auch Dialoge (die sonst in der Top-Layer lägen) */
+@media (orientation: portrait) {
+  body.touch-on .dlg {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --fade: 0ms;
+  }
+  .dlg[open] {
+    animation: none;
+  }
+  .touch {
+    transition: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------- Maus: Tooltip & Yoke-Modus (AP4) */
+.tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  max-width: 320px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  background: rgba(16, 18, 20, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font: 12px/1.35 var(--font-ui);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 20;
+  transition: opacity 120ms ease;
+}
+.tip.hidden {
+  opacity: 0;
+}
+
+.yoke-ind {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  z-index: 5;
+}
+.yoke-ind::before,
+.yoke-ind::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.25);
+}
+.yoke-ind::before {
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+}
+.yoke-ind::after {
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 1px;
+}
+.yoke-ind-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: 0.85;
+}
+.yoke-ind.hidden {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- Touch-Layout (SPEC §4.6) */
+.touch {
+  display: none;
+  position: fixed;
+  inset: 0;
+  pointer-events: none; /* nur die Bedienelemente fangen Touches; freie Fläche → Blick drehen (Canvas) */
+  z-index: 10;
+  opacity: 1;
+  transition: opacity 400ms ease;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+body.touch-on .touch {
+  display: block;
+}
+.touch.idle {
+  opacity: 0.3;
+}
+.touch > *,
+.touch .t-group > *,
+.touch .t-pair > * {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.t-stick {
+  --size: min(42dvh, 176px);
+  position: absolute;
+  left: calc(16px + env(safe-area-inset-left));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  width: var(--size);
+  height: var(--size);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.14) 70%, rgba(255, 255, 255, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.t-stick-cross {
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+.t-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  background: rgba(40, 44, 48, 0.75);
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 140ms ease-out;
+}
+.t-stick.active .t-stick-knob {
+  transition: none;
+  border-color: var(--green);
+}
+
+.t-throttle {
+  position: absolute;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  width: 60px;
+  height: min(56dvh, 250px);
+  border-radius: 10px;
+  background: rgba(20, 22, 24, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+.t-throttle-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to top, rgba(61, 220, 132, 0.12), rgba(61, 220, 132, 0.3));
+}
+.t-throttle-knob {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 44px;
+  bottom: 0;
+  border-radius: 8px;
+  background: rgba(22, 22, 22, 0.85);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+}
+.t-throttle-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  text-align: center;
+  font: 600 12px/1 var(--font-mono);
+  color: var(--text);
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+.t-rudder {
+  position: absolute;
+  left: 50%;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  width: min(38vw, 320px);
+  height: 44px;
+  transform: translateX(-50%);
+  border-radius: 22px;
+  background: rgba(20, 22, 24, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.t-rudder-center {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.t-rudder-knob {
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 44px;
+  height: 36px;
+  margin-left: -22px;
+  border-radius: 18px;
+  background: rgba(22, 22, 22, 0.85);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  transition: transform 140ms ease-out;
+}
+.t-rudder.active .t-rudder-knob {
+  transition: none;
+  border-color: var(--green);
+}
+
+.t-group {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+.t-top-left {
+  left: calc(16px + env(safe-area-inset-left));
+}
+.t-top-right {
+  right: calc(16px + env(safe-area-inset-right));
+}
+.t-pair {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.t-read {
+  min-width: 34px;
+  text-align: center;
+  font: 600 11px/1.2 var(--font-mono);
+  color: var(--text);
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none !important;
+}
+.t-btn {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 2px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(20, 22, 24, 0.5);
+  color: var(--text);
+  font: 600 16px/1 var(--font-ui);
+  -webkit-tap-highlight-color: transparent;
+}
+.t-btn small {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+.t-btn.active {
+  background: rgba(61, 220, 132, 0.3);
+  border-color: var(--green);
+}
+.t-brake {
+  position: absolute;
+  right: calc(88px + env(safe-area-inset-right));
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  min-width: 64px;
+  min-height: 56px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.t-brake.park {
+  border-color: var(--amber);
+}
+
+/* Hochkant-Hinweis auf Handys */
+.rotate-hint {
+  display: none;
+}
+@media (orientation: portrait) {
+  body.touch-on .rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-content: center;
+    gap: 10px;
+    padding: 24px;
+    text-align: center;
+    background: var(--bg);
+    color: var(--text);
+    font: 600 20px/1.3 var(--font-ui);
+  }
+  body.touch-on .touch {
+    display: none;
+  }
+}
+.rotate-hint-icon {
+  font-size: 48px;
+  color: var(--green);
+}
+.rotate-hint-sub {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+}

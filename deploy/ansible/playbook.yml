@@ -1,0 +1,174 @@
+# C172 Web – minimales Deployment auf Debian 13 (trixie) mit nginx aus den Debian-Paketquellen.
+#
+#   Ausrollen:   ansible-playbook -i inventory.ini deploy/ansible/playbook.yml
+#   Rollback:    ansible-playbook -i inventory.ini deploy/ansible/playbook.yml --tags rollback
+#   (lokal im Container/VM: -i localhost, -c local)
+#
+# Ablauf (SPEC §6a): Release vollständig nach /var/www/c172/releases/<release-id>/ hochladen → prüfen (Pflicht-
+# dateien, nginx -t) → Symlink /var/www/c172/current atomar umschalten (rename) → nginx neu laden. Das vorherige
+# Release bleibt für den Rollback erhalten (Symlink „previous“); ältere Releases werden entfernt – current und
+# previous nie, egal wie die Release-IDs sortieren.
+# Ausgeliefert wird nur der Webinhalt (index.html, css/, js/, vendor/) – keine Tests, SPEC/PLAN oder .git.
+- name: C172 Web ausrollen
+  hosts: all
+  become: true
+  vars:
+    app_root: /var/www/c172
+    # release_id (optional per -e) wird unten einmalig festgeschrieben – Play-Variablen sind lazy
+    release_dir: "{{ app_root }}/releases/{{ release_stamp }}"
+    src_root: "{{ playbook_dir }}/../.."
+    web_content: [index.html, css, js, vendor]
+    required_files: [index.html, css/app.css, js/boot.js, js/main.js, vendor/three/three.module.js, vendor/three/three.core.js]
+    keep_releases: 5
+    # false, wenn die Site-Datei auf dem Server gepflegt wird (z. B. nach „certbot --nginx“) – sonst würde jedes
+    # Deployment die von certbot ergänzte TLS-Konfiguration überschreiben
+    nginx_site_managed: true
+  tags: [deploy]
+  tasks:
+    - name: Release-ID einmalig festlegen (UTC-Zeitstempel, sonst -e release_id=…)
+      ansible.builtin.set_fact:
+        release_stamp: "{{ release_id | default(lookup('ansible.builtin.pipe', 'date -u +%Y%m%d%H%M%S')) }}"
+
+    - name: nginx installieren
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Release-ID darf noch nicht existieren (nie in ein aktives oder Rollback-Release schreiben)
+      ansible.builtin.stat:
+        path: "{{ release_dir }}"
+      register: release_exists
+      failed_when: release_exists.stat.exists
+
+    - name: Release-Verzeichnis anlegen (root, nur lesbar für nginx)
+      ansible.builtin.file:
+        path: "{{ release_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Webinhalt hochladen
+      ansible.builtin.copy:
+        src: "{{ src_root }}/{{ item }}"
+        dest: "{{ release_dir }}/"
+        owner: root
+        group: root
+        mode: "u=rwX,g=rX,o=rX"
+        directory_mode: "0755"
+      loop: "{{ web_content }}"
+
+    - name: Release prüfen – Pflichtdateien vorhanden
+      ansible.builtin.stat:
+        path: "{{ release_dir }}/{{ item }}"
+      loop: "{{ required_files }}"
+      register: required
+      failed_when: not required.stat.exists or required.stat.size == 0
+
+    - name: nginx-Site installieren
+      ansible.builtin.copy:
+        src: "{{ src_root }}/deploy/nginx.conf"
+        dest: /etc/nginx/sites-available/c172
+        owner: root
+        group: root
+        mode: "0644"
+      notify: nginx neu laden
+      when: nginx_site_managed | bool
+
+    - name: nginx-Site aktivieren
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/c172
+        dest: /etc/nginx/sites-enabled/c172
+        state: link
+      notify: nginx neu laden
+      when: nginx_site_managed | bool
+
+    - name: Debian-Standardseite deaktivieren
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: nginx neu laden
+      when: nginx_site_managed | bool
+
+    - name: nginx-Konfiguration prüfen
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: current-Symlink atomar auf das neue Release umschalten (bisheriges Ziel wird zu „previous“)
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ app_root }}"
+        old=""
+        # nur ein existierendes, gültiges Release wird Rollback-Ziel (beim Erstdeployment gibt es keins)
+        if [ -L current ] && [ -f current/index.html ]; then old="$(readlink -f current)"; fi
+        if [ -n "$old" ] && [ "$old" != "{{ release_dir }}" ]; then
+          ln -sfn "$old" previous.tmp && mv -T previous.tmp previous
+        fi
+        ln -sfn "{{ release_dir }}" current.tmp
+        mv -T current.tmp current
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Ältere Releases ermitteln (die {{ keep_releases }} neuesten bleiben, current/previous immer)
+      ansible.builtin.shell: |
+        set -o pipefail
+        cd "{{ app_root }}"
+        keep_a="$(readlink -e current || true)"; keep_b="$(readlink -e previous || true)"
+        ls -1dt releases/*/ | sed 's:/$::' | tail -n +{{ keep_releases | int + 1 }} | while read -r d; do
+          p="$(readlink -f "$d")"
+          [ "$p" = "$keep_a" ] || [ "$p" = "$keep_b" ] || echo "$p"
+        done
+      args:
+        executable: /bin/bash
+      register: old_releases
+      changed_when: false
+
+    - name: Ältere Releases entfernen
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ old_releases.stdout_lines }}"
+
+  handlers:
+    - name: nginx neu laden
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+- name: C172 Web – Rollback auf das vorige Release
+  hosts: all
+  become: true
+  vars:
+    app_root: /var/www/c172
+  tags: [rollback, never]
+  tasks:
+    - name: Voriges (zuletzt aktives) Release bestimmen
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ app_root }}"
+        prev="$(readlink -e previous || true)"
+        cur="$(readlink -e current || true)"
+        if [ -z "$prev" ] || [ "$prev" = "$cur" ] || [ ! -f "$prev/index.html" ]; then echo "kein vorheriges Release" >&2; exit 1; fi
+        echo "$prev"
+      args:
+        executable: /bin/bash
+      register: previous
+      changed_when: false
+
+    - name: current und previous atomar tauschen
+      ansible.builtin.shell: |
+        set -e
+        cd "{{ app_root }}"
+        cur="$(readlink -f current)"
+        ln -sfn "{{ previous.stdout }}" current.tmp && mv -T current.tmp current
+        ln -sfn "$cur" previous.tmp && mv -T previous.tmp previous
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Ergebnis
+      ansible.builtin.debug:
+        msg: "current → {{ previous.stdout }}"

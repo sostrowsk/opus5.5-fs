@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Browser-Flugsimulator mit dem Fluggefühl einer Cessna 172P" />
+    <title>C172 Web</title>
+    <link rel="stylesheet" href="css/app.css" />
+    <script type="importmap">
+      { "imports": { "three": "./vendor/three/three.module.js" } }
+    </script>
+  </head>
+  <body data-app="loading">
+    <canvas id="view" aria-label="Flugsimulator-Ansicht"></canvas>
+
+    <!-- Laden: echter Fortschritt (Module, Terrain, Cockpit) -->
+    <div id="loading" class="loading" role="status" aria-live="polite">
+      <div class="load-card">
+        <div class="brand">C172&nbsp;Web</div>
+        <div class="brand-sub">Cessna 172P · Flugplatz Talheim (XTAL)</div>
+        <div id="load-progress" class="progress" role="progressbar" aria-label="Ladefortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="load-bar" class="progress-bar"></div>
+        </div>
+        <div id="load-step" class="load-step">Start …</div>
+      </div>
+    </div>
+    <noscript><div class="loading"><div class="load-card">Dieser Flugsimulator benötigt JavaScript und WebGL2.</div></div></noscript>
+
+    <!-- Startmenü (über der rotierenden Außenansicht) -->
+    <dialog id="dlg-menu" class="dlg dlg-menu" aria-labelledby="menu-title">
+      <header class="dlg-head">
+        <h1 id="menu-title">C172&nbsp;Web</h1>
+        <p class="sub">Cessna 172P · Talheim (XTAL) · Platzhöhe 1476&nbsp;ft</p>
+      </header>
+      <fieldset class="scenarios">
+        <legend>Szenario</legend>
+        <label class="scn">
+          <input type="radio" name="scenario" value="runway" checked />
+          <span class="scn-name">Startbereit Piste 27</span>
+          <span class="scn-desc">Pistenanfang, Motor im Leerlauf, Klappen 0, Parkbremse gesetzt</span>
+        </label>
+        <label class="scn">
+          <input type="radio" name="scenario" value="final" />
+          <span class="scn-name">Endanflug Piste 27</span>
+          <span class="scn-desc">3&nbsp;NM, 1000&nbsp;ft über Grund, 70&nbsp;KIAS, Klappen 20, getrimmt</span>
+        </label>
+        <label class="scn">
+          <input type="radio" name="scenario" value="cruise" />
+          <span class="scn-name">Reiseflug</span>
+          <span class="scn-desc">4500&nbsp;ft MSL, 105&nbsp;KIAS, 2400&nbsp;RPM, getrimmt, Kurs 270</span>
+        </label>
+      </fieldset>
+      <div class="actions">
+        <button type="button" class="btn primary" data-act="fly">Fliegen</button>
+        <button type="button" class="btn" data-act="settings">Einstellungen</button>
+        <button type="button" class="btn" data-act="help">Tastenhilfe</button>
+      </div>
+      <p class="hint"><kbd>P</kbd>/<kbd>Esc</kbd> Pause · <kbd>?</kbd> Hilfe · <kbd>C</kbd> Außenansicht</p>
+    </dialog>
+
+    <!-- Pause -->
+    <dialog id="dlg-pause" class="dlg dlg-small" aria-labelledby="pause-title">
+      <h2 id="pause-title">Pause</h2>
+      <p class="sub">Die Simulation ist angehalten.</p>
+      <div class="actions col">
+        <button type="button" class="btn primary" data-act="resume">Fortsetzen</button>
+        <button type="button" class="btn" data-act="restart">Neustart</button>
+        <button type="button" class="btn" data-act="settings">Einstellungen</button>
+        <button type="button" class="btn" data-act="help">Tastenhilfe</button>
+        <button type="button" class="btn" data-act="menu">Hauptmenü</button>
+      </div>
+    </dialog>
+
+    <!-- Crash -->
+    <dialog id="dlg-crash" class="dlg dlg-small dlg-crash" aria-labelledby="crash-title" aria-describedby="crash-reason">
+      <h2 id="crash-title"><span class="warn-ico" aria-hidden="true">✖</span> Crash</h2>
+      <p id="crash-reason" class="crash-reason">–</p>
+      <p id="crash-data" class="sub mono"></p>
+      <div class="actions col">
+        <button type="button" class="btn primary" data-act="restart">Neustart</button>
+        <button type="button" class="btn" data-act="menu">Hauptmenü</button>
+      </div>
+    </dialog>
+
+    <!-- Einstellungen (Controls werden aus js/config.js erzeugt) -->
+    <dialog id="dlg-settings" class="dlg dlg-settings" aria-labelledby="settings-title">
+      <header class="dlg-head row">
+        <h2 id="settings-title">Einstellungen</h2>
+        <button type="button" class="btn icon" data-act="close" aria-label="Einstellungen schließen">✕</button>
+      </header>
+      <form id="settings-form" class="settings" method="dialog"></form>
+      <div class="actions">
+        <button type="button" class="btn" data-act="defaults">Standardwerte</button>
+        <button type="button" class="btn primary" data-act="close">Fertig</button>
+      </div>
+    </dialog>
+
+    <!-- Tastenhilfe -->
+    <dialog id="dlg-help" class="dlg dlg-help" aria-labelledby="help-title">
+      <header class="dlg-head row">
+        <h2 id="help-title">Tastenhilfe</h2>
+        <button type="button" class="btn icon" data-act="close" aria-label="Hilfe schließen">✕</button>
+      </header>
+      <div class="help-cols">
+        <table class="keys">
+          <caption>Steuerung</caption>
+          <tbody>
+            <tr><th scope="row"><kbd>↑</kbd> <kbd>↓</kbd></th><td>Höhenruder drücken / ziehen</td></tr>
+            <tr><th scope="row"><kbd>←</kbd> <kbd>→</kbd></th><td>Querruder</td></tr>
+            <tr><th scope="row"><kbd>Z</kbd>/<kbd>Y</kbd> <kbd>X</kbd> · <kbd>,</kbd> <kbd>.</kbd></th><td>Seitenruder links / rechts</td></tr>
+            <tr><th scope="row"><kbd>Bild↑</kbd> <kbd>Bild↓</kbd> · <kbd>+</kbd> <kbd>−</kbd></th><td>Gas</td></tr>
+            <tr><th scope="row"><kbd>Shift</kbd>+<kbd>+</kbd> / <kbd>−</kbd></th><td>Vollgas / Leerlauf</td></tr>
+            <tr><th scope="row"><kbd>F</kbd> <kbd>V</kbd> · <kbd>F5</kbd> <kbd>F6</kbd></th><td>Klappen eine Stufe hoch / runter</td></tr>
+            <tr><th scope="row"><kbd>T</kbd> <kbd>G</kbd> · <kbd>Pos1</kbd> <kbd>Ende</kbd></th><td>Trimmung nachdrücken / ziehen (halten)</td></tr>
+            <tr><th scope="row"><kbd>B</kbd> · <kbd>Shift</kbd>+<kbd>B</kbd></th><td>Radbremsen (halten) · Parkbremse</td></tr>
+            <tr><th scope="row"><kbd>N</kbd> <kbd>M</kbd></th><td>Differenzialbremse links / rechts</td></tr>
+            <tr><th scope="row"><kbd>I</kbd></th><td>Zündung OFF ↔ BOTH, halten = START</td></tr>
+          </tbody>
+        </table>
+        <table class="keys">
+          <caption>Ansicht &amp; System</caption>
+          <tbody>
+            <tr><th scope="row"><kbd>1</kbd>–<kbd>4</kbd></th><td>Blick vorn / links / rechts / Panel</td></tr>
+            <tr><th scope="row"><kbd>Leertaste</kbd></th><td>Blick zentrieren</td></tr>
+            <tr><th scope="row"><kbd>C</kbd></th><td>Cockpit ↔ Außenansicht</td></tr>
+            <tr><th scope="row"><kbd>L</kbd> · <kbd>O</kbd></th><td>Landelicht · Positions- und Blitzlichter</td></tr>
+            <tr><th scope="row"><kbd>H</kbd></th><td>Datenleiste</td></tr>
+            <tr><th scope="row"><kbd>P</kbd> / <kbd>Esc</kbd></th><td>Pause</td></tr>
+            <tr><th scope="row"><kbd>R</kbd></th><td>Szenario neu starten</td></tr>
+            <tr><th scope="row"><kbd>?</kbd></th><td>Diese Hilfe</td></tr>
+          </tbody>
+        </table>
+        <div class="help-text">
+          <h3>Maus</h3>
+          <p>Umsehen: rechte oder mittlere Taste ziehen (oder <kbd>Alt</kbd> + links). Mausrad: Zoom. Klickbar im Cockpit
+            (Hand-Cursor): Gashebel ziehen, Klappenschalter oben/unten, Trimmrad, Zündschlüssel, Lichtschalter, Parkbremse,
+            Kollsman- und Kurskreisel-Knopf (Mausrad). Im Yoke-Modus steuert die Mausposition Nick und Roll.</p>
+          <h3>Touch</h3>
+          <p>Links Steuerhorn-Stick, rechts Gashebel, unten Seitenruder. Ein Finger auf freier Fläche dreht den Blick.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" data-act="close">Schließen</button>
+      </div>
+    </dialog>
+
+    <!-- Grafikkontext verloren -->
+    <dialog id="dlg-gl" class="dlg dlg-small" aria-labelledby="gl-title" aria-describedby="gl-msg">
+      <h2 id="gl-title"><span class="warn-ico" aria-hidden="true">⚠</span> Grafik unterbrochen</h2>
+      <p id="gl-msg" class="sub">Der Grafikkontext ist verloren gegangen (Treiber oder Speicher). Die Simulation ist angehalten.</p>
+      <div class="actions col">
+        <button type="button" class="btn primary" data-act="glrestart" disabled>Neu starten</button>
+      </div>
+    </dialog>
+
+    <!-- Fehler beim Laden / WebGL2 fehlt (boot.js) -->
+    <dialog id="dlg-error" class="dlg dlg-small" aria-labelledby="error-title" aria-describedby="error-msg">
+      <h2 id="error-title"><span class="warn-ico" aria-hidden="true">⚠</span> <span id="error-title-text">Fehler</span></h2>
+      <p id="error-msg" class="sub"></p>
+      <p id="error-detail" class="detail mono" hidden></p>
+      <div class="actions col">
+        <button type="button" id="error-retry" class="btn primary">Erneut versuchen</button>
+      </div>
+    </dialog>
+
+    <div id="hud" class="hud hidden" aria-live="off"></div>
+
+    <script type="module" src="js/boot.js"></script>
+  </body>
+</html>
